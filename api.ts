@@ -5,7 +5,7 @@ import type {
   Installation,
   InstallationDetail,
   LeaderboardKind,
-  MarketplaceSkill,
+  MarketDataset,
   OperationEvent,
   OperationSnapshot,
   Settings,
@@ -49,16 +49,16 @@ export function schemaVersion(): number {
 export async function marketLeaderboard(
   kind: LeaderboardKind,
   forceRefresh = false,
-): Promise<MarketplaceSkill[]> {
-  return await AppNative.marketLeaderboard(kind, forceRefresh) as MarketplaceSkill[];
+): Promise<MarketDataset> {
+  return await AppNative.marketLeaderboard(kind, forceRefresh) as MarketDataset;
 }
 
 export async function marketSearch(
   query: string,
   limit = 60,
   forceRefresh = false,
-): Promise<MarketplaceSkill[]> {
-  return await AppNative.marketSearch(query, limit, forceRefresh) as MarketplaceSkill[];
+): Promise<MarketDataset> {
+  return await AppNative.marketSearch(query, limit, forceRefresh) as MarketDataset;
 }
 
 export async function marketPreview(source: SkillSource): Promise<SkillPreview> {

@@ -2,13 +2,13 @@
 
 ## 项目定位
 
-使用 nsh 构建桌面 Skills Manager。核心功能包括 skills.sh 市场、显式预览、安装、My Skills、手动更新和设置
+使用 nsh 构建桌面端App--Skills Manager。核心功能包括 skills.sh 市场、显式预览、安装、My Skills、手动更新和设置
 
 ## 技术栈
 
 - nsh / nsh-core `0.4.0`，TSX 原生 UI，不使用 React、Web DOM 或 Tauri API。
 - Rust 2024；`src/api/` 负责 nsh 接口边界，`src/core/` 负责可测试的领域与基础设施逻辑。
-- SQLite（rusqlite）、serde / serde_json、reqwest、Git CLI、SHA-256、ZIP、tokio broadcast。
+- SQLite（rusqlite）、serde / serde\_json、reqwest、Git CLI、SHA-256、ZIP、tokio broadcast。
 - TypeScript 通过 `nativeModule("skills-manager-nsh/native")` 调用 Rust。
 
 ## 项目结构
@@ -32,7 +32,7 @@ docs/todo/                 # 后续工作安排
 
 - 以本机安装的 nsh `0.4.0` 为准
 - 查询 nsh API 或行为时，先读 `docs/NSH-DOCS-LOOKUP.md`；优先 Context7 `/longbridge/nsh`，每项最多 4 次查询，不臆造 API 或文档地址
-- 原生服务通过 `#[module]` 注册；Rust snake_case 方法会生成 TypeScript camelCase 名称
+- 原生服务通过 `#[module]` 注册；Rust snake\_case 方法会生成 TypeScript camelCase 名称
 - 修改原生接口后同步更新 `api.ts` 和 `types.ts`，运行 `nsh check` 并核对生成声明；`.nsh/types/` 不手工编辑
 - async 原生方法映射为 Promise。只读长任务使用 `nsh_core::prelude::blocking`，写操作统一进入 FIFO `OperationQueue`。
 - Git、HTTP、哈希、ZIP 和批量文件 IO 不得占用 UI 引擎线程；操作事件使用 `Callback<JsonValue>.post(...)`。

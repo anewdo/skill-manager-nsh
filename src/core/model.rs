@@ -145,7 +145,7 @@ pub struct OperationEvent {
     pub operation: Option<OperationSnapshot>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillSource {
     pub source_type: SourceType,
     pub source_key: String,

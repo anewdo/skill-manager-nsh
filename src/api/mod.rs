@@ -34,7 +34,7 @@ impl AppNative {
         crate::core::migrations::LATEST_VERSION
     }
 
-    /// Loads a skills.sh leaderboard, using fresh or offline cached data.
+    /// Loads a skills.sh leaderboard with its fetch time and whether it is a stale cache.
     pub async fn market_leaderboard(
         kind: String,
         force_refresh: bool,
@@ -43,7 +43,7 @@ impl AppNative {
         run_json(move || market::leaderboard(&app_state()?.store, kind, force_refresh)).await
     }
 
-    /// Searches skills.sh, using fresh or offline cached data.
+    /// Searches skills.sh with the fetch time and whether it is a stale cache.
     pub async fn market_search(
         query: String,
         limit: u32,

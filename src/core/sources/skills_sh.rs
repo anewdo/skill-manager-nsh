@@ -72,12 +72,7 @@ pub struct MarketplaceSkill {
     pub name: String,
     pub source: String,
     pub installs: u64,
-}
-
-impl MarketplaceSkill {
-    pub fn lineage(&self) -> Result<SkillSource> {
-        marketplace_source(&self.source, &self.skill_id)
-    }
+    pub lineage: SkillSource,
 }
 
 pub fn marketplace_source(source: &str, skill_id: &str) -> Result<SkillSource> {
@@ -395,11 +390,12 @@ fn marketplace_skill(
         SourceType::WellKnown => source.trim().to_ascii_lowercase(),
     };
     Ok(MarketplaceSkill {
-        id: lineage.source_key,
+        id: lineage.source_key.clone(),
         skill_id: skill_id.trim().to_string(),
         name: name.to_string(),
         source,
         installs,
+        lineage,
     })
 }
 
@@ -467,8 +463,8 @@ mod tests {
             let skills = parse_search_response(&body).unwrap();
             assert_eq!(skills[0].id, "well_known:uizze.com/ui-radar");
             assert_eq!(
-                skills[0].lineage().unwrap().url.unwrap(),
-                "https://skills.sh/site/uizze.com/ui-radar"
+                skills[0].lineage.url.as_deref(),
+                Some("https://skills.sh/site/uizze.com/ui-radar")
             );
         }
         assert!(parse_search_response("[]").unwrap().is_empty());
