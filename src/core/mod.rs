@@ -11,3 +11,6 @@ pub mod naming;
 pub mod operations;
 pub mod sources;
 pub mod store;
+
+#[cfg(test)]
+mod test_support;

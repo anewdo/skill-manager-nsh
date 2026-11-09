@@ -361,22 +361,10 @@ fn now_millis() -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     use super::*;
-
-    fn wait_terminal(queue: &OperationQueue, id: &str) -> OperationSnapshot {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            if let Some(snapshot) = queue.snapshot(id)
-                && is_terminal(snapshot.state)
-            {
-                return snapshot;
-            }
-            assert!(Instant::now() < deadline, "operation {id} did not finish");
-            thread::sleep(Duration::from_millis(2));
-        }
-    }
+    use crate::core::test_support::wait_terminal;
 
     fn progress(phase: &str) -> OperationProgress {
         OperationProgress {
