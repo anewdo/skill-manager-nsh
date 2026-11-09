@@ -19,6 +19,7 @@ struct AppState {
     repo: CentralRepo,
     store: Arc<Store>,
     market: market::MarketCache,
+    preview: preview::PreviewCache,
 }
 
 static APP_STATE: OnceLock<Result<Arc<AppState>>> = OnceLock::new();
@@ -64,6 +65,9 @@ impl AppNative {
     }
 
     /// Downloads and reads a skill only when the user explicitly requests a preview.
+    ///
+    /// Reopening the same skill within the short preview TTL is served from the
+    /// in-memory cache instead of downloading again.
     pub async fn market_preview(source: JsonValue) -> std::result::Result<JsonValue, JsError> {
         let source: SkillSource = serde_json::from_value(source).map_err(|error| {
             js_error(AppError::invalid_input(format!(
@@ -73,7 +77,7 @@ impl AppNative {
         run_json(move || {
             let state = app_state()?;
             let proxy = state.store.settings()?.proxy;
-            let preview = preview::load(&state.repo, source, &proxy)?;
+            let preview = preview::load(&state.preview, &state.store, &state.repo, source, &proxy)?;
             Ok(preview)
         })
         .await
@@ -153,9 +157,15 @@ impl AppNative {
         run_json(move || settings::update(&app_state()?.store, patch)).await
     }
 
-    /// Clears the in-memory market cache and reports the removed count.
+    /// Clears the in-memory market and preview caches and reports the removed count.
     pub async fn clear_cache() -> std::result::Result<JsonValue, JsError> {
-        run_json(|| Ok(market::clear_cache(&app_state()?.market))).await
+        run_json(|| {
+            let state = app_state()?;
+            let mut report = market::clear_cache(&state.market);
+            report.cleared_entries += state.preview.clear();
+            Ok(report)
+        })
+        .await
     }
 
     /// Returns the absolute data directory owned by this application.
@@ -263,6 +273,7 @@ fn app_state() -> Result<Arc<AppState>> {
                 repo,
                 store: Arc::new(store),
                 market: market::MarketCache::new(),
+                preview: preview::PreviewCache::new(),
             }))
         })
         .clone()

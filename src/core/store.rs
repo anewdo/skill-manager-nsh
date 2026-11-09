@@ -207,6 +207,20 @@ impl Store {
         .map_err(Into::into)
     }
 
+    pub fn marketplace_installation_by_source(
+        &self,
+        source_key: &str,
+    ) -> Result<Option<Installation>> {
+        let conn = self.conn()?;
+        conn.query_row(
+            &format!("{INSTALLATION_SELECT} WHERE category = 'marketplace' AND source_key = ?1"),
+            [source_key],
+            map_installation,
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
     pub fn list_installations(&self, category: Category) -> Result<Vec<Installation>> {
         let conn = self.conn()?;
         let mut statement = conn.prepare(&format!(

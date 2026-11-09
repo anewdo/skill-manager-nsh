@@ -8,7 +8,7 @@ use super::sources::skills_sh::{LeaderboardKind, MarketplaceSkill, SkillsShClien
 
 /// Marketplace data is always fetched online; this cache only absorbs repeated
 /// requests for the same list so switching views does not hit skills.sh again.
-const CACHE_TTL: Duration = Duration::from_secs(30);
+const CACHE_TTL: Duration = Duration::from_mins(5);
 
 /// Recently fetched marketplace lists, kept for one process only.
 pub struct MarketCache {
