@@ -1,5 +1,6 @@
 import { nativeModule } from "nsh";
 import type {
+  CacheClearReport,
   Category,
   Installation,
   InstallationDetail,
@@ -8,6 +9,7 @@ import type {
   OperationEvent,
   OperationSnapshot,
   Settings,
+  SettingsPatch,
   SkillPreview,
   SkillSource,
   TrashEntry,
@@ -25,6 +27,9 @@ interface NativeModules {
     cancelOperation(id: string): unknown;
     subscribeOperations(onEvent: (value: OperationEvent) => void): Promise<void>;
     getSettings(): Promise<unknown>;
+    updateSettings(patch: unknown): Promise<unknown>;
+    clearCache(): Promise<unknown>;
+    dataDirectory(): Promise<unknown>;
     listInstallations(category: string): Promise<unknown>;
     installationDetail(id: string): Promise<unknown>;
     renameInstallation(id: string, newName: string): unknown;
@@ -84,6 +89,18 @@ export async function subscribeOperations(
 
 export async function getSettings(): Promise<Settings> {
   return await AppNative.getSettings() as Settings;
+}
+
+export async function updateSettings(patch: SettingsPatch): Promise<Settings> {
+  return await AppNative.updateSettings(patch) as Settings;
+}
+
+export async function clearCache(): Promise<CacheClearReport> {
+  return await AppNative.clearCache() as CacheClearReport;
+}
+
+export async function dataDirectory(): Promise<string> {
+  return await AppNative.dataDirectory() as string;
 }
 
 export async function listInstallations(category: Category): Promise<Installation[]> {

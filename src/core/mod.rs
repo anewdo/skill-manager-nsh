@@ -9,6 +9,7 @@ pub mod migrations;
 pub mod model;
 pub mod naming;
 pub mod operations;
+pub mod settings;
 pub mod sources;
 pub mod store;
 

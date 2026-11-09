@@ -8,9 +8,10 @@ use crate::core::error::{AppError, Result};
 use crate::core::installations;
 use crate::core::market;
 use crate::core::model::{
-    Category, Installation, OperationEvent, OperationKind, Settings, SkillSource,
+    Category, Installation, OperationEvent, OperationKind, Settings, SettingsPatch, SkillSource,
 };
 use crate::core::operations::OperationQueue;
+use crate::core::settings;
 use crate::core::sources::{preview, skills_sh::LeaderboardKind};
 use crate::core::store::Store;
 
@@ -130,6 +131,26 @@ impl AppNative {
             Ok(settings)
         })
         .await
+    }
+
+    /// Applies a partial settings patch and returns the persisted settings.
+    pub async fn update_settings(patch: JsonValue) -> std::result::Result<JsonValue, JsError> {
+        let patch: SettingsPatch = serde_json::from_value(patch).map_err(|error| {
+            js_error(AppError::invalid_input(format!(
+                "invalid settings patch: {error}"
+            )))
+        })?;
+        run_json(move || settings::update(&app_state()?.store, patch)).await
+    }
+
+    /// Clears persistent market cache entries and reports the removed count.
+    pub async fn clear_cache() -> std::result::Result<JsonValue, JsError> {
+        run_json(|| market::clear_cache(&app_state()?.store)).await
+    }
+
+    /// Returns the absolute data directory owned by this application.
+    pub async fn data_directory() -> std::result::Result<JsonValue, JsError> {
+        run_json(|| Ok(app_state()?.repo.root().display().to_string())).await
     }
 
     /// Lists installations in one category.

@@ -2,10 +2,17 @@ use chrono::Utc;
 use serde_json::Value;
 
 use super::error::{AppError, ErrorCode, Result};
+use super::model::CacheClearReport;
 use super::sources::skills_sh::{LeaderboardKind, MarketplaceSkill, SkillsShClient};
 use super::store::Store;
 
 const CACHE_TTL_MILLIS: i64 = 5 * 60 * 1000;
+
+pub fn clear_cache(store: &Store) -> Result<CacheClearReport> {
+    Ok(CacheClearReport {
+        cleared_entries: store.clear_market_cache()? as u64,
+    })
+}
 
 pub fn leaderboard(
     store: &Store,
@@ -185,6 +192,17 @@ mod tests {
 
         assert_eq!(error.code, ErrorCode::Network);
         assert!(error.retryable);
+    }
+
+    #[test]
+    fn clearing_the_cache_reports_the_removed_entries() {
+        let store = Store::in_memory().unwrap();
+        cache(&store, "leaderboard:hot", &["one"], 1);
+        cache(&store, "search:react:60", &["two"], 2);
+
+        assert_eq!(clear_cache(&store).unwrap().cleared_entries, 2);
+        assert_eq!(clear_cache(&store).unwrap().cleared_entries, 0);
+        assert!(store.market_cache("leaderboard:hot").unwrap().is_none());
     }
 
     #[test]

@@ -295,6 +295,48 @@ pub struct Settings {
     pub proxy: ProxySettings,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+pub struct ProxyPatch {
+    #[serde(default)]
+    pub mode: Option<ProxyMode>,
+    #[serde(default)]
+    pub custom_url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+pub struct SettingsPatch {
+    #[serde(default)]
+    pub language: Option<Language>,
+    #[serde(default)]
+    pub theme: Option<Theme>,
+    #[serde(default)]
+    pub proxy: Option<ProxyPatch>,
+}
+
+impl SettingsPatch {
+    pub fn apply_to(self, current: &Settings) -> Settings {
+        let proxy = match self.proxy {
+            Some(patch) => ProxySettings {
+                mode: patch.mode.unwrap_or(current.proxy.mode),
+                custom_url: patch
+                    .custom_url
+                    .or_else(|| current.proxy.custom_url.clone()),
+            },
+            None => current.proxy.clone(),
+        };
+        Settings {
+            language: self.language.unwrap_or(current.language),
+            theme: self.theme.unwrap_or(current.theme),
+            proxy,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CacheClearReport {
+    pub cleared_entries: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MarketCacheEntry {
     pub cache_key: String,

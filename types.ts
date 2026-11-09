@@ -171,10 +171,25 @@ export interface ProxySettings {
   custom_url: string | null;
 }
 
+export interface ProxyPatch {
+  mode?: ProxyMode;
+  custom_url?: string;
+}
+
 export interface Settings {
   language: Language;
   theme: Theme;
   proxy: ProxySettings;
+}
+
+export interface SettingsPatch {
+  language?: Language;
+  theme?: Theme;
+  proxy?: ProxyPatch;
+}
+
+export interface CacheClearReport {
+  cleared_entries: number;
 }
 
 export interface MarketplaceSkill {

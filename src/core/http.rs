@@ -28,6 +28,11 @@ pub fn build_client(proxy: &ProxySettings, timeout: Duration) -> Result<Client> 
     builder.build().map_err(AppError::internal)
 }
 
+pub fn validate_proxy(proxy: &ProxySettings) -> Result<()> {
+    custom_proxy_url(proxy)?;
+    Ok(())
+}
+
 pub fn custom_proxy_url(proxy: &ProxySettings) -> Result<Option<&str>> {
     if proxy.mode != ProxyMode::Custom {
         return Ok(None);
