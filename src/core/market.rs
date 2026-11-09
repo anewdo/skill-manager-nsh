@@ -1,53 +1,122 @@
-use chrono::Utc;
-use serde::Serialize;
-use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::{Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
-use super::error::{AppError, ErrorCode, Result};
-use super::model::CacheClearReport;
+use super::error::{AppError, Result};
+use super::model::{CacheClearReport, ProxySettings};
 use super::sources::skills_sh::{LeaderboardKind, MarketplaceSkill, SkillsShClient};
-use super::store::Store;
 
-const CACHE_TTL_MILLIS: i64 = 5 * 60 * 1000;
-/// The version of the cached dataset shape, part of every cache key: a payload
-/// written by another version of the app is never read as this one.
-const CACHE_VERSION: &str = "v2";
+/// Marketplace data is always fetched online; this cache only absorbs repeated
+/// requests for the same list so switching views does not hit skills.sh again.
+const CACHE_TTL: Duration = Duration::from_secs(30);
 
-/// What the marketplace shows: the entries and how old they are.
-#[derive(Debug, Clone, Serialize)]
-pub struct MarketDataset {
-    pub skills: Vec<MarketplaceSkill>,
-    /// When the entries were fetched from skills.sh, in milliseconds since the epoch.
-    pub fetched_at: i64,
-    /// The network failed and the entries come from the cache.
-    pub stale: bool,
+/// Recently fetched marketplace lists, kept for one process only.
+pub struct MarketCache {
+    ttl: Duration,
+    entries: Mutex<HashMap<String, CachedSkills>>,
+    fetch: Mutex<()>,
 }
 
-pub fn clear_cache(store: &Store) -> Result<CacheClearReport> {
-    Ok(CacheClearReport {
-        cleared_entries: store.clear_market_cache()? as u64,
-    })
+struct CachedSkills {
+    stored_at: Instant,
+    skills: Vec<MarketplaceSkill>,
+}
+
+impl Default for MarketCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MarketCache {
+    pub fn new() -> Self {
+        Self::with_ttl(CACHE_TTL)
+    }
+
+    fn with_ttl(ttl: Duration) -> Self {
+        Self {
+            ttl,
+            entries: Mutex::new(HashMap::new()),
+            fetch: Mutex::new(()),
+        }
+    }
+
+    /// Returns the cached list younger than the TTL, or fetches it once and
+    /// caches the result. A failed fetch is reported to the caller as is.
+    fn load(
+        &self,
+        key: &str,
+        force_refresh: bool,
+        fetch: impl FnOnce() -> Result<Vec<MarketplaceSkill>>,
+    ) -> Result<Vec<MarketplaceSkill>> {
+        if !force_refresh && let Some(skills) = self.fresh(key) {
+            return Ok(skills);
+        }
+
+        // One fetch at a time: a second request for the same list waits for the
+        // first and then reuses its result instead of fetching again.
+        let _fetch = lock(&self.fetch);
+        if !force_refresh && let Some(skills) = self.fresh(key) {
+            return Ok(skills);
+        }
+
+        let skills = fetch()?;
+        let mut entries = lock(&self.entries);
+        entries.retain(|_, cached| cached.stored_at.elapsed() < self.ttl);
+        entries.insert(
+            key.to_owned(),
+            CachedSkills {
+                stored_at: Instant::now(),
+                skills: skills.clone(),
+            },
+        );
+        Ok(skills)
+    }
+
+    fn fresh(&self, key: &str) -> Option<Vec<MarketplaceSkill>> {
+        let entries = lock(&self.entries);
+        let cached = entries.get(key)?;
+        (cached.stored_at.elapsed() < self.ttl).then(|| cached.skills.clone())
+    }
+
+    fn clear(&self) -> u64 {
+        let mut entries = lock(&self.entries);
+        let cleared = entries.len() as u64;
+        entries.clear();
+        cleared
+    }
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|error| error.into_inner())
+}
+
+pub fn clear_cache(cache: &MarketCache) -> CacheClearReport {
+    CacheClearReport {
+        cleared_entries: cache.clear(),
+    }
 }
 
 pub fn leaderboard(
-    store: &Store,
+    cache: &MarketCache,
+    proxy: &ProxySettings,
     kind: LeaderboardKind,
     force_refresh: bool,
-) -> Result<MarketDataset> {
-    let proxy = store.settings()?.proxy;
-    cached_with_fetch(
-        store,
-        &format!("{CACHE_VERSION}:leaderboard:{}", kind.as_str()),
+) -> Result<Vec<MarketplaceSkill>> {
+    cache.load(
+        &format!("leaderboard:{}", kind.as_str()),
         force_refresh,
-        || SkillsShClient::new(&proxy)?.fetch_leaderboard(kind),
+        || SkillsShClient::new(proxy)?.fetch_leaderboard(kind),
     )
 }
 
 pub fn search(
-    store: &Store,
+    cache: &MarketCache,
+    proxy: &ProxySettings,
     query: &str,
     limit: usize,
     force_refresh: bool,
-) -> Result<MarketDataset> {
+) -> Result<Vec<MarketplaceSkill>> {
     let query = query.trim();
     if query.is_empty() {
         return Err(AppError::invalid_input("search query is required"));
@@ -58,68 +127,18 @@ pub fn search(
         ));
     }
 
-    let proxy = store.settings()?.proxy;
-    let cache_key = format!("{CACHE_VERSION}:search:{}:{limit}", query.to_lowercase());
-    cached_with_fetch(store, &cache_key, force_refresh, || {
-        SkillsShClient::new(&proxy)?.search(query, limit)
+    let key = format!("search:{}:{limit}", query.to_lowercase());
+    cache.load(&key, force_refresh, || {
+        SkillsShClient::new(proxy)?.search(query, limit)
     })
-}
-
-fn cached_with_fetch(
-    store: &Store,
-    cache_key: &str,
-    force_refresh: bool,
-    fetch: impl FnOnce() -> Result<Vec<MarketplaceSkill>>,
-) -> Result<MarketDataset> {
-    let now = Utc::now().timestamp_millis();
-    let cached = store
-        .market_cache(cache_key)?
-        .map(|entry| decode_cache(entry.payload, entry.fetched_at))
-        .transpose()?;
-
-    if !force_refresh
-        && let Some((skills, fetched_at)) = &cached
-        && now.saturating_sub(*fetched_at) < CACHE_TTL_MILLIS
-    {
-        return Ok(MarketDataset {
-            skills: skills.clone(),
-            fetched_at: *fetched_at,
-            stale: false,
-        });
-    }
-
-    match fetch() {
-        Ok(skills) => {
-            let payload = serde_json::to_value(&skills)?;
-            store.put_market_cache(cache_key, &payload, now)?;
-            Ok(MarketDataset {
-                skills,
-                fetched_at: now,
-                stale: false,
-            })
-        }
-        Err(error) if error.code == ErrorCode::Network => match cached {
-            Some((skills, fetched_at)) => Ok(MarketDataset {
-                skills,
-                fetched_at,
-                stale: true,
-            }),
-            None => Err(error),
-        },
-        Err(error) => Err(error),
-    }
-}
-
-fn decode_cache(payload: Value, fetched_at: i64) -> Result<(Vec<MarketplaceSkill>, i64)> {
-    let skills = serde_json::from_value(payload)
-        .map_err(|error| AppError::database(format!("invalid market cache payload: {error}")))?;
-    Ok((skills, fetched_at))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::error::ErrorCode;
     use crate::core::sources::skills_sh::marketplace_source;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn skill(name: &str) -> MarketplaceSkill {
         MarketplaceSkill {
@@ -132,148 +151,100 @@ mod tests {
         }
     }
 
-    fn leaderboard_key() -> String {
-        format!("{CACHE_VERSION}:leaderboard:hot")
+    fn proxy() -> ProxySettings {
+        ProxySettings::default()
     }
 
-    fn cache(store: &Store, key: &str, names: &[&str], fetched_at: i64) {
-        let skills = names.iter().map(|name| skill(name)).collect::<Vec<_>>();
-        store
-            .put_market_cache(key, &serde_json::to_value(skills).unwrap(), fetched_at)
+    #[test]
+    fn repeated_requests_within_the_ttl_fetch_once() {
+        let cache = MarketCache::new();
+        let calls = AtomicUsize::new(0);
+        let first = cache
+            .load("leaderboard:all_time", false, || {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(vec![skill("cached")])
+            })
             .unwrap();
+        let second = cache
+            .load("leaderboard:all_time", false, || {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(vec![skill("other")])
+            })
+            .unwrap();
+
+        assert_eq!(first, vec![skill("cached")]);
+        assert_eq!(second, vec![skill("cached")]);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]
-    fn fresh_cache_avoids_fetching() {
-        let store = Store::in_memory().unwrap();
-        let fetched_at = Utc::now().timestamp_millis();
-        cache(&store, &leaderboard_key(), &["cached"], fetched_at);
+    fn expired_entries_are_fetched_again() {
+        let cache = MarketCache::with_ttl(Duration::ZERO);
+        let mut fetched = vec![skill("first")];
 
-        let dataset = cached_with_fetch(&store, &leaderboard_key(), false, || {
-            panic!("fresh cache must not fetch")
-        })
-        .unwrap();
+        let first = cache.load("key", false, || Ok(fetched.clone())).unwrap();
+        assert_eq!(first, vec![skill("first")]);
+        assert!(cache.fresh("key").is_none());
 
-        assert_eq!(dataset.skills, vec![skill("cached")]);
-        assert_eq!(dataset.fetched_at, fetched_at);
-        assert!(!dataset.stale);
+        fetched = vec![skill("second")];
+        let second = cache.load("key", false, || Ok(fetched.clone())).unwrap();
+        assert_eq!(second, vec![skill("second")]);
     }
 
     #[test]
-    fn stale_cache_is_refreshed_and_used_after_network_failure() {
-        let store = Store::in_memory().unwrap();
-        let old = Utc::now().timestamp_millis() - CACHE_TTL_MILLIS - 1;
-        cache(&store, &leaderboard_key(), &["stale"], old);
+    fn force_refresh_bypasses_the_cached_list() {
+        let cache = MarketCache::new();
+        cache
+            .load("key", false, || Ok(vec![skill("cached")]))
+            .unwrap();
 
-        let dataset = cached_with_fetch(&store, &leaderboard_key(), false, || {
-            Err(AppError::new(ErrorCode::Network, "offline").retryable(true))
-        })
-        .unwrap();
-        assert_eq!(dataset.skills, vec![skill("stale")]);
-        assert_eq!(dataset.fetched_at, old);
-        assert!(dataset.stale);
+        let refreshed = cache
+            .load("key", true, || Ok(vec![skill("refreshed")]))
+            .unwrap();
 
-        let dataset = cached_with_fetch(&store, &leaderboard_key(), false, || {
-            Ok(vec![skill("fresh")])
-        })
-        .unwrap();
-        assert_eq!(dataset.skills, vec![skill("fresh")]);
-        assert!(dataset.fetched_at > old);
-        assert!(!dataset.stale);
-        let cached = store.market_cache(&leaderboard_key()).unwrap().unwrap();
-        assert!(cached.fetched_at > old);
+        assert_eq!(refreshed, vec![skill("refreshed")]);
+        assert_eq!(cache.fresh("key").unwrap(), vec![skill("refreshed")]);
     }
 
     #[test]
-    fn force_refresh_bypasses_fresh_cache() {
-        let store = Store::in_memory().unwrap();
-        cache(
-            &store,
-            &leaderboard_key(),
-            &["cached"],
-            Utc::now().timestamp_millis(),
-        );
+    fn network_failures_are_reported_even_when_a_list_was_cached() {
+        let cache = MarketCache::new();
+        cache
+            .load("key", false, || Ok(vec![skill("cached")]))
+            .unwrap();
 
-        let dataset = cached_with_fetch(&store, &leaderboard_key(), true, || {
-            Ok(vec![skill("refreshed")])
-        })
-        .unwrap();
-
-        assert_eq!(dataset.skills, vec![skill("refreshed")]);
-        assert!(!dataset.stale);
-    }
-
-    #[test]
-    fn only_network_failures_fall_back_to_stale_data() {
-        let store = Store::in_memory().unwrap();
-        let old = Utc::now().timestamp_millis() - CACHE_TTL_MILLIS - 1;
-        cache(&store, &leaderboard_key(), &["stale"], old);
-
-        let error = cached_with_fetch(&store, &leaderboard_key(), true, || {
-            Err(AppError::invalid_input("bad proxy"))
-        })
-        .unwrap_err();
-        assert_eq!(error.code, ErrorCode::InvalidInput);
-    }
-
-    #[test]
-    fn network_failure_without_cache_preserves_structured_error() {
-        let store = Store::in_memory().unwrap();
-
-        let error = cached_with_fetch(&store, "missing", false, || {
-            Err(AppError::new(ErrorCode::Network, "offline").retryable(true))
-        })
-        .unwrap_err();
+        let error = cache
+            .load("key", true, || {
+                Err(AppError::new(ErrorCode::Network, "offline").retryable(true))
+            })
+            .unwrap_err();
 
         assert_eq!(error.code, ErrorCode::Network);
         assert!(error.retryable);
     }
 
     #[test]
-    fn cache_payloads_of_another_version_are_never_read() {
-        let store = Store::in_memory().unwrap();
-        cache(
-            &store,
-            "leaderboard:hot",
-            &["cached"],
-            Utc::now().timestamp_millis(),
-        );
+    fn clearing_reports_and_removes_every_cached_list() {
+        let cache = MarketCache::new();
+        cache.load("one", false, || Ok(vec![skill("one")])).unwrap();
+        cache.load("two", false, || Ok(vec![skill("two")])).unwrap();
 
-        let dataset = cached_with_fetch(&store, &leaderboard_key(), false, || {
-            Ok(vec![skill("fetched")])
-        })
-        .unwrap();
-
-        assert_eq!(dataset.skills, vec![skill("fetched")]);
+        assert_eq!(clear_cache(&cache).cleared_entries, 2);
+        assert_eq!(clear_cache(&cache).cleared_entries, 0);
+        assert!(cache.fresh("one").is_none());
     }
 
     #[test]
-    fn clearing_the_cache_reports_the_removed_entries() {
-        let store = Store::in_memory().unwrap();
-        cache(&store, &leaderboard_key(), &["one"], 1);
-        cache(
-            &store,
-            &format!("{CACHE_VERSION}:search:react:60"),
-            &["two"],
-            2,
-        );
+    fn search_validates_input_and_normalizes_its_cache_key() {
+        let cache = MarketCache::new();
+        assert!(search(&cache, &proxy(), " ", 60, false).is_err());
+        assert!(search(&cache, &proxy(), "react", 0, false).is_err());
+        assert!(search(&cache, &proxy(), "react", 301, false).is_err());
 
-        assert_eq!(clear_cache(&store).unwrap().cleared_entries, 2);
-        assert_eq!(clear_cache(&store).unwrap().cleared_entries, 0);
-        assert!(store.market_cache(&leaderboard_key()).unwrap().is_none());
-    }
-
-    #[test]
-    fn search_validation_and_cache_keys_are_consistent() {
-        let store = Store::in_memory().unwrap();
-        assert!(search(&store, " ", 60, false).is_err());
-        assert!(search(&store, "react", 0, false).is_err());
-        assert!(search(&store, "react", 301, false).is_err());
-
-        let key = format!("{CACHE_VERSION}:search:react:60");
-        cache(&store, &key, &["cached"], Utc::now().timestamp_millis());
-        let dataset = search(&store, " React ", 60, false).unwrap();
-        assert_eq!(dataset.skills, vec![skill("cached")]);
-        assert!(!dataset.stale);
+        cache
+            .load("search:react:60", false, || Ok(vec![skill("cached")]))
+            .unwrap();
+        let skills = search(&cache, &proxy(), " React ", 60, false).unwrap();
+        assert_eq!(skills, vec![skill("cached")]);
     }
 }

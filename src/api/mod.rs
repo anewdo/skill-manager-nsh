@@ -18,6 +18,7 @@ use crate::core::store::Store;
 struct AppState {
     repo: CentralRepo,
     store: Arc<Store>,
+    market: market::MarketCache,
 }
 
 static APP_STATE: OnceLock<Result<Arc<AppState>>> = OnceLock::new();
@@ -34,23 +35,32 @@ impl AppNative {
         crate::core::migrations::LATEST_VERSION
     }
 
-    /// Loads a skills.sh leaderboard with its fetch time and whether it is a stale cache.
+    /// Loads a skills.sh leaderboard from the network.
     pub async fn market_leaderboard(
         kind: String,
         force_refresh: bool,
     ) -> std::result::Result<JsonValue, JsError> {
         let kind = LeaderboardKind::parse(&kind).map_err(js_error)?;
-        run_json(move || market::leaderboard(&app_state()?.store, kind, force_refresh)).await
+        run_json(move || {
+            let state = app_state()?;
+            let proxy = state.store.settings()?.proxy;
+            market::leaderboard(&state.market, &proxy, kind, force_refresh)
+        })
+        .await
     }
 
-    /// Searches skills.sh with the fetch time and whether it is a stale cache.
+    /// Searches skills.sh on the network.
     pub async fn market_search(
         query: String,
         limit: u32,
         force_refresh: bool,
     ) -> std::result::Result<JsonValue, JsError> {
-        run_json(move || market::search(&app_state()?.store, &query, limit as usize, force_refresh))
-            .await
+        run_json(move || {
+            let state = app_state()?;
+            let proxy = state.store.settings()?.proxy;
+            market::search(&state.market, &proxy, &query, limit as usize, force_refresh)
+        })
+        .await
     }
 
     /// Downloads and reads a skill only when the user explicitly requests a preview.
@@ -143,9 +153,9 @@ impl AppNative {
         run_json(move || settings::update(&app_state()?.store, patch)).await
     }
 
-    /// Clears persistent market cache entries and reports the removed count.
+    /// Clears the in-memory market cache and reports the removed count.
     pub async fn clear_cache() -> std::result::Result<JsonValue, JsError> {
-        run_json(|| market::clear_cache(&app_state()?.store)).await
+        run_json(|| Ok(market::clear_cache(&app_state()?.market))).await
     }
 
     /// Returns the absolute data directory owned by this application.
@@ -252,6 +262,7 @@ fn app_state() -> Result<Arc<AppState>> {
             Ok(Arc::new(AppState {
                 repo,
                 store: Arc::new(store),
+                market: market::MarketCache::new(),
             }))
         })
         .clone()

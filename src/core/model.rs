@@ -336,11 +336,3 @@ impl SettingsPatch {
 pub struct CacheClearReport {
     pub cleared_entries: u64,
 }
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct MarketCacheEntry {
-    pub cache_key: String,
-    pub payload: Value,
-    pub fetched_at: i64,
-    pub last_accessed_at: i64,
-}

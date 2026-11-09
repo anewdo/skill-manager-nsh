@@ -7,7 +7,6 @@ import {
   clampPage,
   filterBySource,
   formatCount,
-  formatDateTime,
   installedLineages,
   installationById,
   pageCount,
@@ -138,10 +137,4 @@ test("drops the YAML frontmatter of a skill document", () => {
   expect(skillBody("---\r\nname: demo\r\n---\r\n# Demo\r\n")).toBe("# Demo\n");
   expect(skillBody("# No frontmatter\n")).toBe("# No frontmatter\n");
   expect(skillBody("---\nname: unclosed\n")).toBe("---\nname: unclosed\n");
-});
-
-test("formats a fetch time as a local date and minute", () => {
-  const time = new Date(2026, 10, 9, 8, 5, 0).getTime();
-
-  expect(formatDateTime(time)).toBe("2026-11-09 08:05");
 });

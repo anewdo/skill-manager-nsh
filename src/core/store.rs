@@ -4,14 +4,12 @@ use std::time::Duration;
 
 use chrono::Utc;
 use rusqlite::{Connection, OptionalExtension, Row, params};
-use serde_json::Value;
 
 use super::central_repo::CentralRepo;
 use super::error::{AppError, ErrorCode, Result};
 use super::migrations;
 use super::model::{
-    Category, Installation, LocalState, MarketCacheEntry, Settings, SkillSource, TrashEntry,
-    UpdateState,
+    Category, Installation, LocalState, Settings, SkillSource, TrashEntry, UpdateState,
 };
 
 const SETTINGS_KEY: &str = "app";
@@ -243,61 +241,6 @@ impl Store {
         )?;
         Ok(())
     }
-
-    pub fn market_cache(&self, cache_key: &str) -> Result<Option<MarketCacheEntry>> {
-        let conn = self.conn()?;
-        let cached = conn
-            .query_row(
-                "SELECT payload_json, fetched_at, last_accessed_at FROM market_cache WHERE cache_key = ?1",
-                [cache_key],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, i64>(2)?,
-                    ))
-                },
-            )
-            .optional()?;
-        let Some((payload_json, fetched_at, last_accessed_at)) = cached else {
-            return Ok(None);
-        };
-        let accessed_at = now_millis();
-        conn.execute(
-            "UPDATE market_cache SET last_accessed_at = ?1 WHERE cache_key = ?2",
-            params![accessed_at, cache_key],
-        )?;
-        Ok(Some(MarketCacheEntry {
-            cache_key: cache_key.to_owned(),
-            payload: serde_json::from_str(&payload_json).map_err(AppError::database)?,
-            fetched_at,
-            last_accessed_at: accessed_at.max(last_accessed_at),
-        }))
-    }
-
-    pub fn put_market_cache(
-        &self,
-        cache_key: &str,
-        payload: &Value,
-        fetched_at: i64,
-    ) -> Result<()> {
-        let payload_json = serde_json::to_string(payload)?;
-        let accessed_at = now_millis();
-        self.conn()?.execute(
-            "INSERT INTO market_cache (cache_key, payload_json, fetched_at, last_accessed_at)
-             VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT(cache_key) DO UPDATE SET
-                payload_json = excluded.payload_json,
-                fetched_at = excluded.fetched_at,
-                last_accessed_at = excluded.last_accessed_at",
-            params![cache_key, payload_json, fetched_at, accessed_at],
-        )?;
-        Ok(())
-    }
-
-    pub fn clear_market_cache(&self) -> Result<usize> {
-        Ok(self.conn()?.execute("DELETE FROM market_cache", [])?)
-    }
 }
 
 fn insert_installation_on(conn: &Connection, installation: &Installation) -> Result<()> {
@@ -521,21 +464,6 @@ mod tests {
 
         let store = Store::open_database(path).unwrap();
         assert_eq!(store.settings().unwrap().theme, Theme::Dark);
-    }
-
-    #[test]
-    fn market_cache_can_be_read_stale_and_cleared() {
-        let store = Store::in_memory().unwrap();
-        let payload = serde_json::json!({ "items": [1, 2, 3] });
-        store
-            .put_market_cache("leaderboard:all", &payload, 123)
-            .unwrap();
-
-        let cached = store.market_cache("leaderboard:all").unwrap().unwrap();
-        assert_eq!(cached.payload, payload);
-        assert_eq!(cached.fetched_at, 123);
-        assert_eq!(store.clear_market_cache().unwrap(), 1);
-        assert!(store.market_cache("leaderboard:all").unwrap().is_none());
     }
 
     #[test]

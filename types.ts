@@ -201,15 +201,6 @@ export interface MarketplaceSkill {
   lineage: SkillSource;
 }
 
-/** What the marketplace shows: the entries and how old they are. */
-export interface MarketDataset {
-  skills: MarketplaceSkill[];
-  /** When the entries were fetched from skills.sh, in milliseconds since the epoch. */
-  fetched_at: number;
-  /** The network failed and the entries come from the cache. */
-  stale: boolean;
-}
-
 export interface SkillPreview {
   source: SkillSource;
   relative_root: string;
@@ -218,11 +209,4 @@ export interface SkillPreview {
   skill_md: string;
   revision: string | null;
   digest: string | null;
-}
-
-export interface MarketCacheEntry<T = unknown> {
-  cache_key: string;
-  payload: T;
-  fetched_at: number;
-  last_accessed_at: number;
 }

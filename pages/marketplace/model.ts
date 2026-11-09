@@ -93,10 +93,3 @@ export function formatCount(value: number): string {
   const text = Math.trunc(Math.max(0, value)).toString();
   return text.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
-
-/** `YYYY-MM-DD HH:mm` in the user's local time. */
-export function formatDateTime(milliseconds: number): string {
-  const date = new Date(milliseconds);
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}

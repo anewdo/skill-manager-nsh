@@ -10,7 +10,6 @@ import type {
   AppError,
   Installation,
   LeaderboardKind,
-  MarketDataset,
   MarketplaceSkill,
   OperationProgress,
   OperationSnapshot,
@@ -24,7 +23,6 @@ import {
   clampPage,
   filterBySource,
   formatCount,
-  formatDateTime,
   installationById,
   installedLineages,
   pageCount,
@@ -92,7 +90,7 @@ export function MarketplacePage(props: { store: AppStore }) {
   const appliedQuery = signal("");
   const sourceFilter = signal<SourceFilter>("all");
   const page = signal(1);
-  const dataset = signal<MarketDataset | null>(null);
+  const dataset = signal<MarketplaceSkill[] | null>(null);
   const loading = signal(false);
   const loadError = signal<AppError | null>(null);
   const selected = signal<MarketplaceSkill | null>(null);
@@ -104,11 +102,11 @@ export function MarketplacePage(props: { store: AppStore }) {
   const installNotice = signal<InstallNotice | null>(null);
 
   const installed = computed(() => installedLineages(props.store.installations()));
-  const filtered = computed(() => filterBySource(dataset()?.skills ?? [], sourceFilter()));
+  const filtered = computed(() => filterBySource(dataset() ?? [], sourceFilter()));
   const totalPages = computed(() => pageCount(filtered().length));
   const currentPage = computed(() => clampPage(page(), totalPages()));
   const rows = computed(() => chunk(paginate(filtered(), currentPage())));
-  const hasSkills = computed(() => (dataset()?.skills.length ?? 0) > 0);
+  const hasSkills = computed(() => (dataset()?.length ?? 0) > 0);
   const rangeSummary = computed(() => {
     const range = pageRange(currentPage(), filtered().length);
     if (!range) {
@@ -529,16 +527,6 @@ export function MarketplacePage(props: { store: AppStore }) {
               message={`${text("marketplace.error.title")}: ${errorText(error())}`}
               actionLabel={text("common.retry")}
               onAction={() => void load(true)}
-            />
-          )}
-        </If>
-        <If when={dataset()?.stale === true}>
-          {() => (
-            <Banner
-              tone="warning"
-              message={text("marketplace.stale", {
-                time: formatDateTime(dataset()?.fetched_at ?? 0),
-              })}
             />
           )}
         </If>

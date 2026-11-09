@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use super::error::{AppError, Result};
 
-pub const LATEST_VERSION: u32 = 2;
+pub const LATEST_VERSION: u32 = 3;
 
 pub fn run_migrations(conn: &Connection) -> Result<()> {
     let current: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
@@ -36,6 +36,7 @@ fn migrate_step(conn: &Connection, from_version: u32) -> Result<()> {
     match from_version {
         0 => migrate_to_v1(conn),
         1 => migrate_to_v2(conn),
+        2 => migrate_to_v3(conn),
         _ => Err(AppError::database(format!(
             "unknown migration version: {from_version}"
         ))),
@@ -119,6 +120,13 @@ fn migrate_to_v2(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Marketplace data is fetched online and cached in memory; the persisted
+/// market cache is gone, so its table is dropped.
+fn migrate_to_v3(conn: &Connection) -> Result<()> {
+    conn.execute_batch("DROP TABLE market_cache;")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,10 +148,7 @@ mod tests {
             .unwrap()
             .collect::<rusqlite::Result<_>>()
             .unwrap();
-        assert_eq!(
-            tables,
-            ["installations", "market_cache", "settings", "trash"]
-        );
+        assert_eq!(tables, ["installations", "settings", "trash"]);
     }
 
     #[test]
@@ -178,6 +183,35 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM trash", [], |row| row.get(0))
             .unwrap();
         assert_eq!(trash_count, 0);
+    }
+
+    #[test]
+    fn upgrades_a_v2_database_by_dropping_the_persisted_market_cache() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_to_v1(&conn).unwrap();
+        migrate_to_v2(&conn).unwrap();
+        conn.pragma_update(None, "user_version", 2).unwrap();
+        conn.execute(
+            "INSERT INTO market_cache (cache_key, payload_json, fetched_at, last_accessed_at)
+             VALUES ('leaderboard:hot', '[]', 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        run_migrations(&conn).unwrap();
+
+        let version: u32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, LATEST_VERSION);
+        let tables: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'market_cache'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(tables, 0);
     }
 
     #[test]
