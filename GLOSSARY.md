@@ -16,9 +16,9 @@ _Avoid_: 已安装 Skill、应用
 Marketplace Installation 与其 Skill Source 之间持续存在的关系；远端内容变化形成同一 Lineage 的新版本，而不是自动形成另一项安装。
 _Avoid_: Identical Skills、显示名称
 
-**Scoped Name**:
-同名但内容不同的 Marketplace Installation 所使用的完整来源名称，形式为 `@owner/repo/skill-name`；首个同名安装仍使用普通名称。
-_Avoid_: 数字后缀、owner 简写、Installation Lineage
+**Suffixed Name**:
+同名但内容不同的 Marketplace Installation 所使用的本地名称，首个同名安装使用普通名称，后续依次使用 `-2`、`-3` 等数字后缀，例如 `skill-name-2`。
+_Avoid_: Scoped Name、owner 简写、Installation Lineage
 
 **Manual Rename**:
 用户为一条 Installed Skill 指定新的显示名和本地根目录名，不改变其文件内容、来源或 Installation Lineage。

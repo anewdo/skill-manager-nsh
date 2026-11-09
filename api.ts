@@ -12,7 +12,7 @@ import type {
   SettingsPatch,
   SkillPreview,
   SkillSource,
-  TrashEntry,
+  UpdateConflictPolicy,
 } from "./types";
 
 interface NativeModules {
@@ -34,9 +34,8 @@ interface NativeModules {
     installationDetail(id: string): Promise<unknown>;
     renameInstallation(id: string, newName: string): unknown;
     deleteInstallations(ids: unknown, confirmModified: boolean): unknown;
-    listTrash(): Promise<unknown>;
-    restoreTrash(ids: unknown): unknown;
-    purgeTrash(ids: unknown): unknown;
+    checkUpdates(ids: unknown): unknown;
+    applyUpdate(id: string, conflictPolicy: string): unknown;
   };
 }
 
@@ -119,14 +118,10 @@ export function deleteInstallations(ids: string[], confirmModified = false): str
   return AppNative.deleteInstallations(ids, confirmModified) as string;
 }
 
-export async function listTrash(): Promise<TrashEntry[]> {
-  return await AppNative.listTrash() as TrashEntry[];
+export function checkUpdates(ids: string[]): string {
+  return AppNative.checkUpdates(ids) as string;
 }
 
-export function restoreTrash(ids: string[]): string {
-  return AppNative.restoreTrash(ids) as string;
-}
-
-export function purgeTrash(ids: string[]): string {
-  return AppNative.purgeTrash(ids) as string;
+export function applyUpdate(id: string, conflictPolicy: UpdateConflictPolicy): string {
+  return AppNative.applyUpdate(id, conflictPolicy) as string;
 }

@@ -9,6 +9,7 @@ use crate::core::installations;
 use crate::core::market;
 use crate::core::model::{
     Category, Installation, OperationEvent, OperationKind, Settings, SettingsPatch, SkillSource,
+    UpdateConflictPolicy,
 };
 use crate::core::operations::OperationQueue;
 use crate::core::settings;
@@ -234,30 +235,37 @@ impl AppNative {
         to_json(operation)
     }
 
-    /// Lists trash entries that can still be restored or purged.
-    pub async fn list_trash() -> std::result::Result<JsonValue, JsError> {
-        run_json(|| app_state()?.store.trash_entries()).await
-    }
-
-    /// Restores trash entries to their original installation paths.
-    pub fn restore_trash(ids: JsonValue) -> std::result::Result<JsonValue, JsError> {
+    /// Queues a manual update check for the given installations.
+    pub fn check_updates(ids: JsonValue) -> std::result::Result<JsonValue, JsError> {
         let ids = parse_id_list(ids).map_err(js_error)?;
         let state = app_state().map_err(js_error)?;
         let operation = operations()
-            .enqueue(OperationKind::Restore, move |context| {
-                installations::restore_trash(&state.repo, &state.store, &ids, &context)
+            .enqueue(OperationKind::CheckUpdates, move |context| {
+                let proxy = state.store.settings()?.proxy;
+                installations::check_updates(&state.repo, &state.store, &ids, &proxy, &context)
             })
             .map_err(js_error)?;
         to_json(operation)
     }
 
-    /// Permanently deletes trash entries and their files.
-    pub fn purge_trash(ids: JsonValue) -> std::result::Result<JsonValue, JsError> {
-        let ids = parse_id_list(ids).map_err(js_error)?;
+    /// Queues an update for one installation and returns its operation ID.
+    pub fn apply_update(
+        id: String,
+        conflict_policy: String,
+    ) -> std::result::Result<JsonValue, JsError> {
+        let policy = UpdateConflictPolicy::from_request(&conflict_policy).map_err(js_error)?;
         let state = app_state().map_err(js_error)?;
         let operation = operations()
-            .enqueue(OperationKind::PurgeTrash, move |context| {
-                installations::purge_trash(&state.repo, &state.store, &ids, &context)
+            .enqueue(OperationKind::ApplyUpdate, move |context| {
+                let proxy = state.store.settings()?.proxy;
+                installations::apply_update(
+                    &state.repo,
+                    &state.store,
+                    &id,
+                    policy,
+                    &proxy,
+                    &context,
+                )
             })
             .map_err(js_error)?;
         to_json(operation)

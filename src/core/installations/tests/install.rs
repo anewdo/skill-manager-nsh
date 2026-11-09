@@ -105,14 +105,14 @@ fn identical_content_from_another_source_reuses_the_existing_record() {
     );
     assert!(
         !repo
-            .installation_path(Category::Marketplace, "@other/repo/demo")
+            .installation_path(Category::Marketplace, "demo-2")
             .unwrap()
             .exists()
     );
 }
 
 #[test]
-fn same_name_with_different_content_uses_a_scoped_real_path() {
+fn same_name_with_different_content_uses_a_numeric_suffix() {
     let (_temp, repo, store) = setup();
     add_existing(
         &repo,
@@ -131,9 +131,9 @@ fn same_name_with_different_content_uses_a_scoped_real_path() {
 
     assert_eq!(snapshot.state, OperationState::Succeeded);
     let installation: Installation = serde_json::from_value(snapshot.result.unwrap()).unwrap();
-    assert_eq!(installation.root_relpath, "@other/repo/demo");
+    assert_eq!(installation.root_relpath, "demo-2");
     assert!(
-        repo.installation_path(Category::Marketplace, "@other/repo/demo")
+        repo.installation_path(Category::Marketplace, "demo-2")
             .unwrap()
             .join("SKILL.md")
             .is_file()

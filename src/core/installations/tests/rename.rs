@@ -34,7 +34,7 @@ fn rename_moves_the_directory_and_updates_identity_fields() {
 }
 
 #[test]
-fn rename_keeps_the_scoped_parent_and_replaces_the_last_component() {
+fn rename_replaces_only_the_last_component_of_a_nested_path() {
     let (_temp, repo, store) = setup();
     add_existing(
         &repo,
@@ -42,7 +42,7 @@ fn rename_keeps_the_scoped_parent_and_replaces_the_last_component() {
         "one",
         source("owner/repo"),
         "@owner/repo/demo",
-        "scoped",
+        "nested",
     );
 
     let snapshot = run_rename(&repo, &store, "one", "renamed");

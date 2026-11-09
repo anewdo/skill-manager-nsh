@@ -10,9 +10,9 @@ use super::content_identity::{ContentSummary, content_hash, content_summary, fil
 use super::error::{AppError, ErrorCode, Result};
 use super::metadata;
 use super::model::{
-    BatchItemFailure, Category, DeleteReport, DeletedItem, Installation, InstallationDetail,
-    LocalSkillInfo, LocalState, OperationProgress, ProxySettings, PurgeReport, RestoreReport,
-    RestoredItem, SkillSource, SourceType, TrashEntry, UpdateState,
+    BatchItemFailure, Category, CheckUpdatesReport, DeleteReport, DeletedItem, Installation,
+    InstallationDetail, LocalSkillInfo, LocalState, OperationProgress, ProxySettings, SkillSource,
+    UpdateCheckItem, UpdateConflictPolicy, UpdateState,
 };
 use super::naming::{RenameKind, allocate_marketplace_name, classify_rename, root_key};
 use super::operations::OperationContext;
@@ -61,11 +61,7 @@ fn install_with_download(
         .iter()
         .map(|installation| installation.root_key.clone())
         .collect::<BTreeSet<_>>();
-    let relative_root = allocate_marketplace_name(
-        &downloaded.metadata.name,
-        &source_scope(&source)?,
-        &used_root_keys,
-    )?;
+    let relative_root = allocate_marketplace_name(&downloaded.metadata.name, &used_root_keys)?;
     context.progress(progress("installing", false))?;
 
     let final_installations = store.list_installations(Category::Marketplace)?;
@@ -166,25 +162,6 @@ fn find_identical(
         }
     }
     Ok(None)
-}
-
-fn source_scope(source: &SkillSource) -> Result<String> {
-    match source.source_type {
-        SourceType::GitHub => source
-            .repository
-            .clone()
-            .ok_or_else(|| AppError::invalid_input("GitHub source repository is required")),
-        SourceType::WellKnown => {
-            let lineage = source
-                .source_key
-                .strip_prefix("well_known:")
-                .ok_or_else(|| AppError::invalid_input("invalid well-known source lineage"))?;
-            let (domain, _) = lineage
-                .split_once('/')
-                .ok_or_else(|| AppError::invalid_input("invalid well-known source lineage"))?;
-            Ok(format!("well-known/{domain}"))
-        }
-    }
 }
 
 fn progress(phase: &str, cancellable: bool) -> OperationProgress {
@@ -366,26 +343,45 @@ pub fn delete_installations(
     Ok(report)
 }
 
-pub fn restore_trash(
+pub fn check_updates(
     repo: &CentralRepo,
     store: &Store,
-    trash_ids: &[String],
+    ids: &[String],
+    proxy: &ProxySettings,
     context: &OperationContext,
-) -> Result<RestoreReport> {
-    if trash_ids.is_empty() {
+) -> Result<CheckUpdatesReport> {
+    check_updates_with_download(
+        store,
+        ids,
+        |id| {
+            let installation = store.installation(id)?.ok_or_else(installation_not_found)?;
+            let source = remote_source(&installation)?;
+            download(repo, &source, proxy)
+        },
+        context,
+    )
+}
+
+fn check_updates_with_download(
+    store: &Store,
+    ids: &[String],
+    mut download: impl FnMut(&str) -> Result<DownloadedSkill>,
+    context: &OperationContext,
+) -> Result<CheckUpdatesReport> {
+    if ids.is_empty() {
         return Err(AppError::invalid_input(
-            "at least one trash entry id is required",
+            "at least one installation id is required",
         ));
     }
-    let mut report = RestoreReport {
-        restored: Vec::new(),
+    let mut report = CheckUpdatesReport {
+        checked: Vec::new(),
         failed: Vec::new(),
         cancelled: false,
     };
-    let total = trash_ids.len() as u64;
+    let total = ids.len() as u64;
 
-    for (index, id) in trash_ids.iter().enumerate() {
-        match context.progress(batch_progress("restoring", index as u64, total, true)) {
+    for (index, id) in ids.iter().enumerate() {
+        match context.progress(batch_progress("checking", index as u64, total, true)) {
             Ok(()) => {}
             Err(error) if error.code == ErrorCode::Cancelled => {
                 if index == 0 {
@@ -396,59 +392,240 @@ pub fn restore_trash(
             }
             Err(error) => return Err(error),
         }
-        match restore_one(repo, store, id) {
-            Ok(item) => {
-                context.installations_changed();
-                report.restored.push(item);
-            }
+        match check_update_with_download(store, id, || download(id)) {
+            Ok(item) => report.checked.push(item),
             Err(error) => report.failed.push(BatchItemFailure {
                 id: id.clone(),
                 error,
             }),
         }
     }
+    context.installations_changed();
     Ok(report)
 }
 
-pub fn purge_trash(
+fn check_update_with_download(
+    store: &Store,
+    id: &str,
+    download: impl FnOnce() -> Result<DownloadedSkill>,
+) -> Result<UpdateCheckItem> {
+    let installation = store.installation(id)?.ok_or_else(installation_not_found)?;
+    let checked_at = Utc::now().timestamp_millis();
+
+    let remote = download().and_then(|downloaded| {
+        let hash = content_hash(&downloaded.skill_root)?;
+        let revision = downloaded
+            .revision
+            .clone()
+            .or_else(|| downloaded.digest.clone());
+        Ok((hash, revision))
+    });
+
+    match remote {
+        Ok((hash, remote_revision)) => {
+            let update_state = if installation.baseline_hash.as_deref() == Some(hash.as_str()) {
+                UpdateState::UpToDate
+            } else {
+                UpdateState::Available
+            };
+            store.update_update_check(
+                id,
+                remote_revision.as_deref(),
+                update_state,
+                checked_at,
+                None,
+            )?;
+            Ok(UpdateCheckItem {
+                id: installation.id,
+                display_name: installation.display_name,
+                update_state,
+                remote_revision,
+            })
+        }
+        Err(error) => {
+            store.update_update_check(
+                id,
+                installation.remote_revision.as_deref(),
+                UpdateState::CheckFailed,
+                checked_at,
+                Some(&error.message),
+            )?;
+            Err(error)
+        }
+    }
+}
+
+pub fn apply_update(
     repo: &CentralRepo,
     store: &Store,
-    trash_ids: &[String],
+    id: &str,
+    policy: UpdateConflictPolicy,
+    proxy: &ProxySettings,
     context: &OperationContext,
-) -> Result<PurgeReport> {
-    if trash_ids.is_empty() {
-        return Err(AppError::invalid_input(
-            "at least one trash entry id is required",
+) -> Result<Installation> {
+    let installation = store.installation(id)?.ok_or_else(installation_not_found)?;
+    let source = remote_source(&installation)?;
+    apply_update_with_download(
+        repo,
+        store,
+        id,
+        policy,
+        || download(repo, &source, proxy),
+        context,
+    )
+}
+
+fn apply_update_with_download(
+    repo: &CentralRepo,
+    store: &Store,
+    id: &str,
+    policy: UpdateConflictPolicy,
+    download: impl FnOnce() -> Result<DownloadedSkill>,
+    context: &OperationContext,
+) -> Result<Installation> {
+    let installation = store.installation(id)?.ok_or_else(installation_not_found)?;
+    let initial = inspect_local(repo, &installation)?;
+    if initial.state == LocalState::Modified && policy == UpdateConflictPolicy::Reject {
+        store.update_local_state(
+            id,
+            initial
+                .summary
+                .as_ref()
+                .map(|summary| summary.hash.as_str()),
+            LocalState::Modified,
+            Utc::now().timestamp_millis(),
+        )?;
+        return Err(local_modified_error(
+            &installation,
+            "local changes must be confirmed before updating this installation",
         ));
     }
-    let mut report = PurgeReport {
-        purged: Vec::new(),
-        failed: Vec::new(),
-        cancelled: false,
-    };
-    let total = trash_ids.len() as u64;
 
-    for (index, id) in trash_ids.iter().enumerate() {
-        match context.progress(batch_progress("purging", index as u64, total, true)) {
-            Ok(()) => {}
-            Err(error) if error.code == ErrorCode::Cancelled => {
-                if index == 0 {
-                    return Err(error);
-                }
-                report.cancelled = true;
-                break;
-            }
-            Err(error) => return Err(error),
-        }
-        match purge_one(repo, store, id) {
-            Ok(()) => report.purged.push(id.clone()),
-            Err(error) => report.failed.push(BatchItemFailure {
-                id: id.clone(),
-                error,
-            }),
-        }
+    context.progress(progress("downloading", true))?;
+    let downloaded = download()?;
+    context.progress(progress("validating", true))?;
+    let hash = content_hash(&downloaded.skill_root)?;
+    let remote_revision = downloaded
+        .revision
+        .clone()
+        .or_else(|| downloaded.digest.clone());
+
+    context.progress(progress("installing", false))?;
+    let current = store.installation(id)?.ok_or_else(installation_not_found)?;
+    if current.root_relpath != installation.root_relpath {
+        return Err(AppError::new(
+            ErrorCode::Conflict,
+            "installation was renamed by another operation",
+        ));
     }
-    Ok(report)
+    let local = inspect_local(repo, &current)?;
+    if local.state == LocalState::Modified && policy == UpdateConflictPolicy::Reject {
+        store.update_local_state(
+            id,
+            local.summary.as_ref().map(|summary| summary.hash.as_str()),
+            LocalState::Modified,
+            Utc::now().timestamp_millis(),
+        )?;
+        return Err(local_modified_error(
+            &current,
+            "local changes must be confirmed before updating this installation",
+        ));
+    }
+
+    let now = Utc::now().timestamp_millis();
+    let unchanged =
+        local.state == LocalState::Clean && current.baseline_hash.as_deref() == Some(hash.as_str());
+    if unchanged {
+        store.update_installation_after_update(
+            id,
+            remote_revision.as_deref(),
+            remote_revision.as_deref(),
+            &hash,
+            now,
+        )?;
+        context.installations_changed();
+        return store
+            .installation(id)?
+            .ok_or_else(|| AppError::internal("installation disappeared after update"));
+    }
+
+    let target = repo.installation_path(current.category, &current.root_relpath)?;
+    let created_parents = if local.summary.is_some() {
+        Vec::new()
+    } else {
+        create_parent_directories(&target)?
+    };
+
+    let backup = if local.summary.is_some() {
+        let backup_relpath = format!("update-{}", Uuid::new_v4());
+        let backup_path = repo.staging_path(&backup_relpath)?;
+        ensure_target_missing(&backup_path, &backup_relpath)?;
+        if let Err(error) = fs::rename(&target, &backup_path) {
+            cleanup_parent_directories(&created_parents);
+            return Err(error.into());
+        }
+        Some(backup_path)
+    } else {
+        None
+    };
+
+    if let Err(error) = fs::rename(&downloaded.skill_root, &target) {
+        let restored = match &backup {
+            Some(backup_path) => fs::rename(backup_path, &target).map_err(|rollback| {
+                AppError::internal(format!(
+                    "placing updated files failed ({error}); restoring the original directory also failed ({rollback}); original files remain at {}",
+                    backup_path.display()
+                ))
+            }),
+            None => Ok(()),
+        };
+        cleanup_parent_directories(&created_parents);
+        restored?;
+        return Err(error.into());
+    }
+
+    if let Err(error) = store.update_installation_after_update(
+        id,
+        remote_revision.as_deref(),
+        remote_revision.as_deref(),
+        &hash,
+        now,
+    ) {
+        let moved_new = fs::rename(&target, &downloaded.skill_root);
+        let restored = match &backup {
+            Some(backup_path) => fs::rename(backup_path, &target),
+            None => Ok(()),
+        };
+        if moved_new.is_err() || restored.is_err() {
+            return Err(AppError::internal(format!(
+                "database update failed ({error}); restoring the previous installation failed; files remain at {}",
+                target.display()
+            )));
+        }
+        cleanup_parent_directories(&created_parents);
+        return Err(error);
+    }
+
+    if let Some(backup_path) = backup {
+        let _ = fs::remove_dir_all(&backup_path);
+    }
+    context.installations_changed();
+    store
+        .installation(id)?
+        .ok_or_else(|| AppError::internal("installation disappeared after update"))
+}
+
+fn remote_source(installation: &Installation) -> Result<SkillSource> {
+    if installation.category != Category::Marketplace {
+        return Err(AppError::new(
+            ErrorCode::Unsupported,
+            "only marketplace installations can be checked or updated",
+        ));
+    }
+    let source = installation.source.clone().ok_or_else(|| {
+        AppError::new(ErrorCode::Unsupported, "installation has no remote source")
+    })?;
+    canonical_source(source)
 }
 
 struct LocalInspection {
@@ -573,117 +750,46 @@ fn delete_one(
             LocalState::Modified,
             Utc::now().timestamp_millis(),
         )?;
-        return Err(AppError::new(
-            ErrorCode::LocalModified,
+        return Err(local_modified_error(
+            &installation,
             "local changes must be confirmed before deleting this installation",
-        )
-        .with_details(serde_json::json!({
-            "installationId": installation.id,
-            "displayName": installation.display_name,
-        })));
+        ));
     }
 
+    let item = DeletedItem {
+        id: installation.id.clone(),
+        display_name: installation.display_name.clone(),
+    };
     if inspection.summary.is_none() {
         store.delete_installation_record(id)?;
-        return Ok(DeletedItem {
-            id: installation.id,
-            display_name: installation.display_name,
-            trashed: false,
-        });
+        return Ok(item);
     }
 
-    let trash_relpath = Uuid::new_v4().to_string();
-    let trash_path = repo.trash_path(&trash_relpath)?;
-    ensure_target_missing(&trash_path, &trash_relpath)?;
-    fs::rename(&inspection.path, &trash_path)?;
+    let staging_relpath = format!("delete-{}", Uuid::new_v4());
+    let staging_path = repo.staging_path(&staging_relpath)?;
+    ensure_target_missing(&staging_path, &staging_relpath)?;
+    fs::rename(&inspection.path, &staging_path)?;
 
-    let mut installation = installation;
-    installation.current_hash = inspection
-        .summary
-        .as_ref()
-        .map(|summary| summary.hash.clone());
-    installation.local_state = inspection.state;
-    let entry = TrashEntry {
-        id: trash_relpath.clone(),
-        installation_id: installation.id.clone(),
-        category: installation.category,
-        display_name: installation.display_name.clone(),
-        original_relpath: installation.root_relpath.clone(),
-        original_root_key: installation.root_key.clone(),
-        trash_relpath,
-        installation,
-        deleted_at: Utc::now().timestamp_millis(),
-    };
-    if let Err(error) = store.trash_installation(&entry) {
-        if let Err(rollback) = fs::rename(&trash_path, &inspection.path) {
+    if let Err(error) = store.delete_installation_record(id) {
+        if let Err(rollback) = fs::rename(&staging_path, &inspection.path) {
             return Err(AppError::internal(format!(
                 "database delete failed ({error}); restoring the installation directory also failed ({rollback}); files remain at {}",
-                trash_path.display()
+                staging_path.display()
             )));
         }
         return Err(error);
     }
-    Ok(DeletedItem {
-        id: entry.installation_id,
-        display_name: entry.display_name,
-        trashed: true,
-    })
-}
 
-fn restore_one(repo: &CentralRepo, store: &Store, trash_id: &str) -> Result<RestoredItem> {
-    let entry = store
-        .trash_entry(trash_id)?
-        .ok_or_else(trash_entry_not_found)?;
-    let target = repo.installation_path(entry.category, &entry.original_relpath)?;
-    ensure_target_missing(&target, &entry.original_relpath)?;
-    reject_restore_conflicts(store, &entry)?;
-
-    let trash_path = repo.trash_path(&entry.trash_relpath)?;
-    ensure_directory(&trash_path, &entry.trash_relpath)?;
-    fs::rename(&trash_path, &target)?;
-
-    let mut installation = entry.installation.clone();
-    installation.updated_at = Utc::now().timestamp_millis();
-    if let Err(error) = store.restore_trash_entry(&entry.id, &installation) {
-        if let Err(rollback) = fs::rename(&target, &trash_path) {
-            return Err(AppError::internal(format!(
-                "database restore failed ({error}); moving files back to trash also failed ({rollback}); files remain at {}",
-                target.display()
-            )));
-        }
-        return Err(error);
+    if let Err(error) = fs::remove_dir_all(&staging_path) {
+        return Err(AppError::new(
+            ErrorCode::Io,
+            format!(
+                "installation was removed from the database, but its files could not be deleted: {}: {error}",
+                staging_path.display()
+            ),
+        ));
     }
-    Ok(RestoredItem {
-        trash_id: entry.id,
-        installation_id: installation.id,
-        display_name: installation.display_name,
-    })
-}
-
-fn purge_one(repo: &CentralRepo, store: &Store, trash_id: &str) -> Result<()> {
-    let entry = store
-        .trash_entry(trash_id)?
-        .ok_or_else(trash_entry_not_found)?;
-    let path = repo.trash_path(&entry.trash_relpath)?;
-    match fs::symlink_metadata(&path) {
-        Ok(metadata) if metadata.file_type().is_symlink() => {
-            return Err(AppError::unsafe_path(format!(
-                "symbolic links are not allowed: {}",
-                path.display()
-            )));
-        }
-        Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(&path)?,
-        Ok(_) => {
-            return Err(AppError::new(
-                ErrorCode::Conflict,
-                "trash entry is not a directory",
-            ));
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.into()),
-    }
-    store.delete_trash_entry(&entry.id)?;
-    Ok(())
+    Ok(item)
 }
 
 fn reject_root_key_conflict(
@@ -701,41 +807,6 @@ fn reject_root_key_conflict(
             ErrorCode::Conflict,
             format!("installation target already exists: {new_relpath}"),
         ));
-    }
-    Ok(())
-}
-
-fn reject_restore_conflicts(store: &Store, entry: &TrashEntry) -> Result<()> {
-    let existing = store.list_installations(entry.category)?;
-    if existing
-        .iter()
-        .any(|installation| installation.root_key == entry.original_root_key)
-    {
-        return Err(AppError::new(
-            ErrorCode::Conflict,
-            format!(
-                "installation target already exists: {}",
-                entry.original_relpath
-            ),
-        )
-        .with_details(serde_json::json!({ "relpath": entry.original_relpath })));
-    }
-    if let Some(source_key) = entry
-        .installation
-        .source
-        .as_ref()
-        .map(|source| source.source_key.as_str())
-        && existing.iter().any(|installation| {
-            installation
-                .source
-                .as_ref()
-                .is_some_and(|source| source.source_key == source_key)
-        })
-    {
-        return Err(
-            AppError::new(ErrorCode::Conflict, "this source is already installed")
-                .with_details(serde_json::json!({ "sourceKey": source_key })),
-        );
     }
     Ok(())
 }
@@ -798,8 +869,11 @@ fn installation_not_found() -> AppError {
     AppError::new(ErrorCode::NotFound, "installation was not found")
 }
 
-fn trash_entry_not_found() -> AppError {
-    AppError::new(ErrorCode::NotFound, "trash entry was not found")
+fn local_modified_error(installation: &Installation, message: &str) -> AppError {
+    AppError::new(ErrorCode::LocalModified, message).with_details(serde_json::json!({
+        "installationId": installation.id,
+        "displayName": installation.display_name,
+    }))
 }
 
 #[cfg(test)]

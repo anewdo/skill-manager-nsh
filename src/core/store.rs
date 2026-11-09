@@ -8,9 +8,7 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 use super::central_repo::CentralRepo;
 use super::error::{AppError, ErrorCode, Result};
 use super::migrations;
-use super::model::{
-    Category, Installation, LocalState, Settings, SkillSource, TrashEntry, UpdateState,
-};
+use super::model::{Category, Installation, LocalState, Settings, SkillSource, UpdateState};
 
 const SETTINGS_KEY: &str = "app";
 const INSTALLATION_SELECT: &str = "
@@ -19,11 +17,6 @@ const INSTALLATION_SELECT: &str = "
            baseline_hash, current_hash, local_state, update_state, update_checked_at,
            created_at, updated_at, last_error
     FROM installations
-";
-const TRASH_SELECT: &str = "
-    SELECT id, installation_id, category, display_name, original_relpath,
-           original_root_key, trash_relpath, installation_json, deleted_at
-    FROM trash
 ";
 
 pub struct Store {
@@ -105,93 +98,69 @@ impl Store {
         Ok(())
     }
 
+    pub fn update_update_check(
+        &self,
+        id: &str,
+        remote_revision: Option<&str>,
+        update_state: UpdateState,
+        checked_at: i64,
+        last_error: Option<&str>,
+    ) -> Result<()> {
+        let affected = self.conn()?.execute(
+            "UPDATE installations
+             SET remote_revision = ?1, update_state = ?2, update_checked_at = ?3,
+                 last_error = ?4, updated_at = ?3
+             WHERE id = ?5",
+            params![
+                remote_revision,
+                update_state.as_str(),
+                checked_at,
+                last_error,
+                id
+            ],
+        )?;
+        if affected == 0 {
+            return Err(installation_not_found());
+        }
+        Ok(())
+    }
+
+    pub fn update_installation_after_update(
+        &self,
+        id: &str,
+        installed_revision: Option<&str>,
+        remote_revision: Option<&str>,
+        content_hash: &str,
+        updated_at: i64,
+    ) -> Result<()> {
+        let affected = self.conn()?.execute(
+            "UPDATE installations
+             SET installed_revision = ?1, remote_revision = ?2, baseline_hash = ?3,
+                 current_hash = ?3, local_state = ?4, update_state = ?5,
+                 update_checked_at = ?6, last_error = NULL, updated_at = ?6
+             WHERE id = ?7",
+            params![
+                installed_revision,
+                remote_revision,
+                content_hash,
+                LocalState::Clean.as_str(),
+                UpdateState::UpToDate.as_str(),
+                updated_at,
+                id
+            ],
+        )?;
+        if affected == 0 {
+            return Err(installation_not_found());
+        }
+        Ok(())
+    }
+
     pub fn delete_installation_record(&self, id: &str) -> Result<()> {
         let affected = self
             .conn()?
             .execute("DELETE FROM installations WHERE id = ?1", [id])?;
         if affected == 0 {
             return Err(installation_not_found());
-        }
-        Ok(())
-    }
-
-    pub fn trash_installation(&self, entry: &TrashEntry) -> Result<()> {
-        let installation_json = serde_json::to_string(&entry.installation)?;
-        let mut conn = self.conn()?;
-        let transaction = conn.transaction()?;
-        transaction.execute(
-            "INSERT INTO trash (
-                id, installation_id, category, display_name, original_relpath,
-                original_root_key, trash_relpath, installation_json, deleted_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![
-                entry.id,
-                entry.installation_id,
-                entry.category.as_str(),
-                entry.display_name,
-                entry.original_relpath,
-                entry.original_root_key,
-                entry.trash_relpath,
-                installation_json,
-                entry.deleted_at,
-            ],
-        )?;
-        let deleted = transaction.execute(
-            "DELETE FROM installations WHERE id = ?1",
-            [&entry.installation_id],
-        )?;
-        if deleted == 0 {
-            return Err(installation_not_found());
-        }
-        transaction.commit()?;
-        Ok(())
-    }
-
-    pub fn trash_entries(&self) -> Result<Vec<TrashEntry>> {
-        let conn = self.conn()?;
-        let mut statement =
-            conn.prepare(&format!("{TRASH_SELECT} ORDER BY deleted_at DESC, id"))?;
-        let entries = statement
-            .query_map([], map_trash_entry)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(entries)
-    }
-
-    pub fn trash_entry(&self, id: &str) -> Result<Option<TrashEntry>> {
-        let conn = self.conn()?;
-        conn.query_row(
-            &format!("{TRASH_SELECT} WHERE id = ?1"),
-            [id],
-            map_trash_entry,
-        )
-        .optional()
-        .map_err(Into::into)
-    }
-
-    pub fn restore_trash_entry(&self, id: &str, installation: &Installation) -> Result<()> {
-        let mut conn = self.conn()?;
-        let transaction = conn.transaction()?;
-        insert_installation_on(&transaction, installation)?;
-        let deleted = transaction.execute("DELETE FROM trash WHERE id = ?1", [id])?;
-        if deleted == 0 {
-            return Err(AppError::new(
-                ErrorCode::NotFound,
-                "trash entry was not found",
-            ));
-        }
-        transaction.commit()?;
-        Ok(())
-    }
-
-    pub fn delete_trash_entry(&self, id: &str) -> Result<()> {
-        let affected = self
-            .conn()?
-            .execute("DELETE FROM trash WHERE id = ?1", [id])?;
-        if affected == 0 {
-            return Err(AppError::new(
-                ErrorCode::NotFound,
-                "trash entry was not found",
-            ));
         }
         Ok(())
     }
@@ -291,24 +260,6 @@ fn insert_installation_on(conn: &Connection, installation: &Installation) -> Res
         ],
     )?;
     Ok(())
-}
-
-fn map_trash_entry(row: &Row<'_>) -> rusqlite::Result<TrashEntry> {
-    let category: String = row.get(2)?;
-    let installation_json: String = row.get(7)?;
-    let installation =
-        serde_json::from_str(&installation_json).map_err(|error| invalid_text_column(7, error))?;
-    Ok(TrashEntry {
-        id: row.get(0)?,
-        installation_id: row.get(1)?,
-        category: Category::parse(&category).map_err(|error| invalid_text_column(2, error))?,
-        display_name: row.get(3)?,
-        original_relpath: row.get(4)?,
-        original_root_key: row.get(5)?,
-        trash_relpath: row.get(6)?,
-        installation,
-        deleted_at: row.get(8)?,
-    })
 }
 
 fn installation_not_found() -> AppError {
@@ -536,39 +487,52 @@ mod tests {
     }
 
     #[test]
-    fn trash_round_trips_restores_and_keeps_the_record() {
+    fn update_checks_and_applied_updates_persist_their_state() {
         let store = Store::in_memory().unwrap();
         let original = installation("one", Category::Marketplace, "demo", Some("source-one"));
         store.insert_installation(&original).unwrap();
-        let entry = TrashEntry {
-            id: "trash-one".to_string(),
-            installation_id: original.id.clone(),
-            category: original.category,
-            display_name: original.display_name.clone(),
-            original_relpath: original.root_relpath.clone(),
-            original_root_key: original.root_key.clone(),
-            trash_relpath: "trash-one".to_string(),
-            installation: original.clone(),
-            deleted_at: 50,
-        };
 
-        store.trash_installation(&entry).unwrap();
-        assert!(store.installation("one").unwrap().is_none());
-        let entries = store.trash_entries().unwrap();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0], entry);
-        assert_eq!(store.trash_entry("trash-one").unwrap(), Some(entry.clone()));
+        store
+            .update_update_check("one", Some("remote-rev"), UpdateState::Available, 500, None)
+            .unwrap();
+        let checked = store.installation("one").unwrap().unwrap();
+        assert_eq!(checked.remote_revision.as_deref(), Some("remote-rev"));
+        assert_eq!(checked.update_state, UpdateState::Available);
+        assert_eq!(checked.update_checked_at, Some(500));
+        assert_eq!(checked.installed_revision, original.installed_revision);
+        assert_eq!(checked.baseline_hash, original.baseline_hash);
 
-        let mut restored = original.clone();
-        restored.updated_at = 500;
-        store.restore_trash_entry(&entry.id, &restored).unwrap();
-        assert_eq!(store.installation("one").unwrap(), Some(restored));
-        assert!(store.trash_entry("trash-one").unwrap().is_none());
+        store
+            .update_update_check(
+                "one",
+                Some("remote-rev"),
+                UpdateState::CheckFailed,
+                600,
+                Some("offline"),
+            )
+            .unwrap();
+        let failed = store.installation("one").unwrap().unwrap();
+        assert_eq!(failed.update_state, UpdateState::CheckFailed);
+        assert_eq!(failed.last_error.as_deref(), Some("offline"));
 
-        store.trash_installation(&entry).unwrap();
-        store.delete_trash_entry(&entry.id).unwrap();
-        assert!(store.trash_entries().unwrap().is_empty());
-        assert!(store.installation("one").unwrap().is_none());
+        store
+            .update_installation_after_update(
+                "one",
+                Some("remote-rev"),
+                Some("remote-rev"),
+                "next",
+                700,
+            )
+            .unwrap();
+        let updated = store.installation("one").unwrap().unwrap();
+        assert_eq!(updated.installed_revision.as_deref(), Some("remote-rev"));
+        assert_eq!(updated.remote_revision.as_deref(), Some("remote-rev"));
+        assert_eq!(updated.baseline_hash.as_deref(), Some("next"));
+        assert_eq!(updated.current_hash.as_deref(), Some("next"));
+        assert_eq!(updated.local_state, LocalState::Clean);
+        assert_eq!(updated.update_state, UpdateState::UpToDate);
+        assert_eq!(updated.update_checked_at, Some(700));
+        assert_eq!(updated.last_error, None);
     }
 
     #[test]
@@ -596,7 +560,10 @@ mod tests {
             ErrorCode::NotFound
         );
         assert_eq!(
-            store.delete_trash_entry("missing").unwrap_err().code,
+            store
+                .update_update_check("missing", None, UpdateState::UpToDate, 1, None)
+                .unwrap_err()
+                .code,
             ErrorCode::NotFound
         );
     }

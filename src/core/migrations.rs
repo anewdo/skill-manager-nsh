@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use super::error::{AppError, Result};
 
-pub const LATEST_VERSION: u32 = 3;
+pub const LATEST_VERSION: u32 = 4;
 
 pub fn run_migrations(conn: &Connection) -> Result<()> {
     let current: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
@@ -37,6 +37,7 @@ fn migrate_step(conn: &Connection, from_version: u32) -> Result<()> {
         0 => migrate_to_v1(conn),
         1 => migrate_to_v2(conn),
         2 => migrate_to_v3(conn),
+        3 => migrate_to_v4(conn),
         _ => Err(AppError::database(format!(
             "unknown migration version: {from_version}"
         ))),
@@ -127,6 +128,12 @@ fn migrate_to_v3(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Deletions remove the local copy immediately, so the trash table is gone.
+fn migrate_to_v4(conn: &Connection) -> Result<()> {
+    conn.execute_batch("DROP TABLE trash;")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,7 +155,7 @@ mod tests {
             .unwrap()
             .collect::<rusqlite::Result<_>>()
             .unwrap();
-        assert_eq!(tables, ["installations", "settings", "trash"]);
+        assert_eq!(tables, ["installations", "settings"]);
     }
 
     #[test]
@@ -179,14 +186,18 @@ mod tests {
             )
             .unwrap();
         assert_eq!(display_name, "demo");
-        let trash_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM trash", [], |row| row.get(0))
+        let trash_tables: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'trash'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
-        assert_eq!(trash_count, 0);
+        assert_eq!(trash_tables, 0);
     }
 
     #[test]
-    fn upgrades_a_v2_database_by_dropping_the_persisted_market_cache() {
+    fn upgrades_a_v2_database_by_dropping_the_market_cache_and_trash() {
         let conn = Connection::open_in_memory().unwrap();
         migrate_to_v1(&conn).unwrap();
         migrate_to_v2(&conn).unwrap();
@@ -194,6 +205,14 @@ mod tests {
         conn.execute(
             "INSERT INTO market_cache (cache_key, payload_json, fetched_at, last_accessed_at)
              VALUES ('leaderboard:hot', '[]', 1, 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO trash (
+                id, installation_id, category, display_name, original_relpath,
+                original_root_key, trash_relpath, installation_json, deleted_at
+            ) VALUES ('trash-one', 'one', 'marketplace', 'demo', 'demo', 'demo', 'trash-one', '{}', 1)",
             [],
         )
         .unwrap();
@@ -206,7 +225,8 @@ mod tests {
         assert_eq!(version, LATEST_VERSION);
         let tables: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'market_cache'",
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name IN ('market_cache', 'trash')",
                 [],
                 |row| row.get(0),
             )

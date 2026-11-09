@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use super::error::{AppError, ErrorCode, Result};
+use super::error::{AppError, Result};
 
 const WINDOWS_RESERVED_BASENAMES: &[&str] = &[
     "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
@@ -16,7 +16,6 @@ pub enum RenameKind {
 
 pub fn allocate_marketplace_name(
     skill_name: &str,
-    repository: &str,
     used_root_keys: &BTreeSet<String>,
 ) -> Result<String> {
     validate_component(skill_name)?;
@@ -24,29 +23,15 @@ pub fn allocate_marketplace_name(
         return Ok(skill_name.to_owned());
     }
 
-    let scoped = scoped_name(repository, skill_name)?;
-    if used_root_keys.contains(&root_key(&scoped)) {
-        return Err(AppError::new(
-            ErrorCode::Conflict,
-            format!("installation name already exists: {scoped}"),
-        ));
+    let mut suffix = 2u64;
+    loop {
+        let candidate = format!("{skill_name}-{suffix}");
+        if !used_root_keys.contains(&root_key(&candidate)) {
+            validate_component(&candidate)?;
+            return Ok(candidate);
+        }
+        suffix += 1;
     }
-    Ok(scoped)
-}
-
-pub fn scoped_name(repository: &str, skill_name: &str) -> Result<String> {
-    let mut parts = repository.split('/');
-    let owner = parts.next().unwrap_or_default();
-    let repo = parts.next().unwrap_or_default();
-    if parts.next().is_some() || owner.is_empty() || repo.is_empty() {
-        return Err(AppError::invalid_input(format!(
-            "repository must use owner/repo form: {repository}"
-        )));
-    }
-    validate_component(owner)?;
-    validate_component(repo)?;
-    validate_component(skill_name)?;
-    Ok(format!("@{owner}/{repo}/{skill_name}"))
 }
 
 pub fn validate_manual_name(name: &str) -> Result<()> {
@@ -114,32 +99,21 @@ mod tests {
     }
 
     #[test]
-    fn allocates_plain_then_full_scoped_name_without_numeric_suffixes() {
+    fn allocates_plain_then_incrementing_numeric_suffixes() {
         let names = used(&[]);
-        assert_eq!(
-            allocate_marketplace_name("demo", "owner/repo", &names).unwrap(),
-            "demo"
-        );
+        assert_eq!(allocate_marketplace_name("demo", &names).unwrap(), "demo");
 
         let names = used(&["demo"]);
-        assert_eq!(
-            allocate_marketplace_name("demo", "owner/repo", &names).unwrap(),
-            "@owner/repo/demo"
-        );
+        assert_eq!(allocate_marketplace_name("demo", &names).unwrap(), "demo-2");
 
-        let names = used(&["demo", "@owner/repo/demo"]);
-        let error = allocate_marketplace_name("demo", "owner/repo", &names).unwrap_err();
-        assert_eq!(error.code, ErrorCode::Conflict);
+        let names = used(&["demo", "demo-2", "demo-3"]);
+        assert_eq!(allocate_marketplace_name("demo", &names).unwrap(), "demo-4");
     }
 
     #[test]
-    fn scoped_name_is_a_real_relative_path() {
-        assert_eq!(
-            scoped_name("longbridge/nsh", "skill-name").unwrap(),
-            "@longbridge/nsh/skill-name"
-        );
-        assert!(scoped_name("missing-repo", "skill-name").is_err());
-        assert!(scoped_name("owner/repo/extra", "skill-name").is_err());
+    fn numeric_suffixes_fill_the_first_free_slot() {
+        let names = used(&["demo", "demo-2", "demo-4"]);
+        assert_eq!(allocate_marketplace_name("demo", &names).unwrap(), "demo-3");
     }
 
     #[test]
@@ -188,11 +162,11 @@ mod tests {
 
     #[test]
     fn root_key_normalizes_separators() {
-        let key = root_key("@owner\\repo/Skill");
+        let key = root_key("nested\\Skill");
         assert!(!key.contains('\\'));
         #[cfg(windows)]
-        assert_eq!(key, "@owner/repo/skill");
+        assert_eq!(key, "nested/skill");
         #[cfg(not(windows))]
-        assert_eq!(key, "@owner/repo/Skill");
+        assert_eq!(key, "nested/Skill");
     }
 }

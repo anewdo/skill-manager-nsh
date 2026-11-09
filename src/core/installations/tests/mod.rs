@@ -11,10 +11,11 @@ use crate::core::operations::OperationQueue;
 use crate::core::sources::skills_sh;
 use crate::core::test_support::wait_terminal;
 
+mod delete;
 mod detail;
 mod install;
 mod rename;
-mod trash;
+mod update;
 
 fn setup() -> (TempDir, CentralRepo, Arc<Store>) {
     let temp = tempfile::tempdir().unwrap();
@@ -130,32 +131,6 @@ fn run_delete(
     let operation = queue
         .enqueue(OperationKind::Delete, move |context| {
             delete_installations(&job_repo, &job_store, &job_ids, confirm_modified, &context)
-        })
-        .unwrap();
-    wait_terminal(&queue, &operation)
-}
-
-fn run_restore(repo: &CentralRepo, store: &Arc<Store>, ids: &[&str]) -> OperationSnapshot {
-    let queue = OperationQueue::new();
-    let job_repo = repo.clone();
-    let job_store = store.clone();
-    let job_ids = ids.iter().map(|id| (*id).to_string()).collect::<Vec<_>>();
-    let operation = queue
-        .enqueue(OperationKind::Restore, move |context| {
-            restore_trash(&job_repo, &job_store, &job_ids, &context)
-        })
-        .unwrap();
-    wait_terminal(&queue, &operation)
-}
-
-fn run_purge(repo: &CentralRepo, store: &Arc<Store>, ids: &[&str]) -> OperationSnapshot {
-    let queue = OperationQueue::new();
-    let job_repo = repo.clone();
-    let job_store = store.clone();
-    let job_ids = ids.iter().map(|id| (*id).to_string()).collect::<Vec<_>>();
-    let operation = queue
-        .enqueue(OperationKind::PurgeTrash, move |context| {
-            purge_trash(&job_repo, &job_store, &job_ids, &context)
         })
         .unwrap();
     wait_terminal(&queue, &operation)

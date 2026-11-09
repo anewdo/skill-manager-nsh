@@ -101,8 +101,6 @@ pub enum OperationKind {
     ApplyUpdate,
     Delete,
     Rename,
-    Restore,
-    PurgeTrash,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -200,33 +198,29 @@ pub struct InstallationDetail {
     pub local: LocalSkillInfo,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct TrashEntry {
-    pub id: String,
-    pub installation_id: String,
-    pub category: Category,
-    pub display_name: String,
-    pub original_relpath: String,
-    pub original_root_key: String,
-    #[serde(skip_serializing)]
-    pub trash_relpath: String,
-    #[serde(skip_serializing)]
-    pub installation: Installation,
-    pub deleted_at: i64,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeletedItem {
     pub id: String,
     pub display_name: String,
-    pub trashed: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RestoredItem {
-    pub trash_id: String,
-    pub installation_id: String,
-    pub display_name: String,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateConflictPolicy {
+    Reject,
+    Overwrite,
+}
+
+impl UpdateConflictPolicy {
+    pub fn from_request(value: &str) -> Result<Self> {
+        match value {
+            "reject" => Ok(Self::Reject),
+            "overwrite" => Ok(Self::Overwrite),
+            _ => Err(AppError::invalid_input(format!(
+                "unsupported update conflict policy: {value}"
+            ))),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -243,15 +237,16 @@ pub struct DeleteReport {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RestoreReport {
-    pub restored: Vec<RestoredItem>,
-    pub failed: Vec<BatchItemFailure>,
-    pub cancelled: bool,
+pub struct UpdateCheckItem {
+    pub id: String,
+    pub display_name: String,
+    pub update_state: UpdateState,
+    pub remote_revision: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PurgeReport {
-    pub purged: Vec<String>,
+pub struct CheckUpdatesReport {
+    pub checked: Vec<UpdateCheckItem>,
     pub failed: Vec<BatchItemFailure>,
     pub cancelled: bool,
 }

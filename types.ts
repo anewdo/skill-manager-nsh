@@ -2,15 +2,14 @@ export type Category = "marketplace" | "local";
 export type SourceType = "github" | "well_known";
 export type LocalState = "unknown" | "clean" | "modified" | "missing";
 export type UpdateState = "unknown" | "up_to_date" | "available" | "check_failed";
+export type UpdateConflictPolicy = "reject" | "overwrite";
 export type OperationState = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 export type OperationKind =
   | "install"
   | "check_updates"
   | "apply_update"
   | "delete"
-  | "rename"
-  | "restore"
-  | "purge_trash";
+  | "rename";
 export type Language = "zh_cn" | "en";
 export type Theme = "light" | "dark" | "system";
 export type ProxyMode = "system" | "none" | "custom";
@@ -121,25 +120,8 @@ export interface InstallationDetail {
   local: LocalSkillInfo;
 }
 
-export interface TrashEntry {
-  id: string;
-  installation_id: string;
-  category: Category;
-  display_name: string;
-  original_relpath: string;
-  original_root_key: string;
-  deleted_at: number;
-}
-
 export interface DeletedItem {
   id: string;
-  display_name: string;
-  trashed: boolean;
-}
-
-export interface RestoredItem {
-  trash_id: string;
-  installation_id: string;
   display_name: string;
 }
 
@@ -154,14 +136,15 @@ export interface DeleteReport {
   cancelled: boolean;
 }
 
-export interface RestoreReport {
-  restored: RestoredItem[];
-  failed: BatchItemFailure[];
-  cancelled: boolean;
+export interface UpdateCheckItem {
+  id: string;
+  display_name: string;
+  update_state: UpdateState;
+  remote_revision: string | null;
 }
 
-export interface PurgeReport {
-  purged: string[];
+export interface CheckUpdatesReport {
+  checked: UpdateCheckItem[];
   failed: BatchItemFailure[];
   cancelled: boolean;
 }

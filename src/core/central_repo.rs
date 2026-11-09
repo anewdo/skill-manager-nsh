@@ -44,10 +44,6 @@ impl CentralRepo {
         self.root.join("staging")
     }
 
-    pub fn trash_dir(&self) -> PathBuf {
-        self.root.join("trash")
-    }
-
     pub fn logs_dir(&self) -> PathBuf {
         self.root.join("logs")
     }
@@ -60,7 +56,6 @@ impl CentralRepo {
             self.git_cache_dir(),
             self.market_cache_dir(),
             self.staging_dir(),
-            self.trash_dir(),
             self.logs_dir(),
         ] {
             fs::create_dir_all(path)?;
@@ -72,8 +67,8 @@ impl CentralRepo {
         resolve_within(&self.skills_root(category), relative)
     }
 
-    pub fn trash_path(&self, relative: &str) -> Result<PathBuf> {
-        resolve_within(&self.trash_dir(), relative)
+    pub fn staging_path(&self, relative: &str) -> Result<PathBuf> {
+        resolve_within(&self.staging_dir(), relative)
     }
 }
 
@@ -148,8 +143,8 @@ mod tests {
         assert!(repo.git_cache_dir().is_dir());
         assert!(repo.market_cache_dir().is_dir());
         assert!(repo.staging_dir().is_dir());
-        assert!(repo.trash_dir().is_dir());
         assert!(repo.logs_dir().is_dir());
+        assert!(!repo.root().join("trash").exists());
         assert_eq!(fs::read(sentinel).unwrap(), b"do not touch");
     }
 
