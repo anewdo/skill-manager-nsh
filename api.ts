@@ -2,6 +2,7 @@ import { nativeModule } from "nsh";
 import type {
   Category,
   Installation,
+  InstallationDetail,
   LeaderboardKind,
   MarketplaceSkill,
   OperationEvent,
@@ -9,6 +10,7 @@ import type {
   Settings,
   SkillPreview,
   SkillSource,
+  TrashEntry,
 } from "./types";
 
 interface NativeModules {
@@ -24,6 +26,12 @@ interface NativeModules {
     subscribeOperations(onEvent: (value: OperationEvent) => void): Promise<void>;
     getSettings(): Promise<unknown>;
     listInstallations(category: string): Promise<unknown>;
+    installationDetail(id: string): Promise<unknown>;
+    renameInstallation(id: string, newName: string): unknown;
+    deleteInstallations(ids: unknown, confirmModified: boolean): unknown;
+    listTrash(): Promise<unknown>;
+    restoreTrash(ids: unknown): unknown;
+    purgeTrash(ids: unknown): unknown;
   };
 }
 
@@ -80,4 +88,28 @@ export async function getSettings(): Promise<Settings> {
 
 export async function listInstallations(category: Category): Promise<Installation[]> {
   return await AppNative.listInstallations(category) as Installation[];
+}
+
+export async function installationDetail(id: string): Promise<InstallationDetail> {
+  return await AppNative.installationDetail(id) as InstallationDetail;
+}
+
+export function renameInstallation(id: string, newName: string): string {
+  return AppNative.renameInstallation(id, newName) as string;
+}
+
+export function deleteInstallations(ids: string[], confirmModified = false): string {
+  return AppNative.deleteInstallations(ids, confirmModified) as string;
+}
+
+export async function listTrash(): Promise<TrashEntry[]> {
+  return await AppNative.listTrash() as TrashEntry[];
+}
+
+export function restoreTrash(ids: string[]): string {
+  return AppNative.restoreTrash(ids) as string;
+}
+
+export function purgeTrash(ids: string[]): string {
+  return AppNative.purgeTrash(ids) as string;
 }

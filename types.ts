@@ -3,7 +3,14 @@ export type SourceType = "github" | "well_known";
 export type LocalState = "unknown" | "clean" | "modified" | "missing";
 export type UpdateState = "unknown" | "up_to_date" | "available" | "check_failed";
 export type OperationState = "queued" | "running" | "succeeded" | "failed" | "cancelled";
-export type OperationKind = "install" | "check_updates" | "apply_update" | "delete" | "rename";
+export type OperationKind =
+  | "install"
+  | "check_updates"
+  | "apply_update"
+  | "delete"
+  | "rename"
+  | "restore"
+  | "purge_trash";
 export type Language = "zh_cn" | "en";
 export type Theme = "light" | "dark" | "system";
 export type ProxyMode = "system" | "none" | "custom";
@@ -90,6 +97,73 @@ export interface Installation {
   created_at: number;
   updated_at: number;
   last_error: string | null;
+}
+
+export interface SkillMetadata {
+  name: string;
+  description: string;
+}
+
+export interface LocalSkillInfo {
+  state: LocalState;
+  path: string;
+  current_hash: string | null;
+  file_count: number | null;
+  total_bytes: number | null;
+  metadata: SkillMetadata | null;
+  skill_md: string | null;
+  skill_md_error: AppError | null;
+  inspected_at: number;
+}
+
+export interface InstallationDetail {
+  installation: Installation;
+  local: LocalSkillInfo;
+}
+
+export interface TrashEntry {
+  id: string;
+  installation_id: string;
+  category: Category;
+  display_name: string;
+  original_relpath: string;
+  original_root_key: string;
+  deleted_at: number;
+}
+
+export interface DeletedItem {
+  id: string;
+  display_name: string;
+  trashed: boolean;
+}
+
+export interface RestoredItem {
+  trash_id: string;
+  installation_id: string;
+  display_name: string;
+}
+
+export interface BatchItemFailure {
+  id: string;
+  error: AppError;
+}
+
+export interface DeleteReport {
+  deleted: DeletedItem[];
+  failed: BatchItemFailure[];
+  cancelled: boolean;
+}
+
+export interface RestoreReport {
+  restored: RestoredItem[];
+  failed: BatchItemFailure[];
+  cancelled: boolean;
+}
+
+export interface PurgeReport {
+  purged: string[];
+  failed: BatchItemFailure[];
+  cancelled: boolean;
 }
 
 export interface ProxySettings {

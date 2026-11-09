@@ -39,16 +39,20 @@ pub fn parse_skill_md(skill_root: &Path) -> Result<SkillMetadata> {
             format!("{} is not UTF-8: {error}", path.display()),
         )
     })?;
-    let yaml = frontmatter(&content).ok_or_else(|| {
+    parse_skill_md_content(&content, &path.display().to_string())
+}
+
+pub fn parse_skill_md_content(content: &str, label: &str) -> Result<SkillMetadata> {
+    let yaml = frontmatter(content).ok_or_else(|| {
         AppError::new(
             ErrorCode::InvalidSkill,
-            format!("{} has no complete YAML frontmatter", path.display()),
+            format!("{label} has no complete YAML frontmatter"),
         )
     })?;
     let frontmatter: Frontmatter = serde_yaml::from_str(yaml).map_err(|error| {
         AppError::new(
             ErrorCode::InvalidSkill,
-            format!("{} has invalid YAML frontmatter: {error}", path.display()),
+            format!("{label} has invalid YAML frontmatter: {error}"),
         )
     })?;
     let name = frontmatter.name.unwrap_or_default().trim().to_owned();

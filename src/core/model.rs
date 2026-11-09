@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::error::{AppError, Result};
+use super::metadata::SkillMetadata;
 
 macro_rules! string_enum {
     ($type:ty, {$($variant:ident => $value:literal),+ $(,)?}) => {
@@ -100,6 +101,8 @@ pub enum OperationKind {
     ApplyUpdate,
     Delete,
     Rename,
+    Restore,
+    PurgeTrash,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,6 +179,81 @@ pub struct Installation {
     pub created_at: i64,
     pub updated_at: i64,
     pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LocalSkillInfo {
+    pub state: LocalState,
+    pub path: String,
+    pub current_hash: Option<String>,
+    pub file_count: Option<u64>,
+    pub total_bytes: Option<u64>,
+    pub metadata: Option<SkillMetadata>,
+    pub skill_md: Option<String>,
+    pub skill_md_error: Option<AppError>,
+    pub inspected_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InstallationDetail {
+    pub installation: Installation,
+    pub local: LocalSkillInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TrashEntry {
+    pub id: String,
+    pub installation_id: String,
+    pub category: Category,
+    pub display_name: String,
+    pub original_relpath: String,
+    pub original_root_key: String,
+    #[serde(skip_serializing)]
+    pub trash_relpath: String,
+    #[serde(skip_serializing)]
+    pub installation: Installation,
+    pub deleted_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeletedItem {
+    pub id: String,
+    pub display_name: String,
+    pub trashed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RestoredItem {
+    pub trash_id: String,
+    pub installation_id: String,
+    pub display_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BatchItemFailure {
+    pub id: String,
+    pub error: AppError,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeleteReport {
+    pub deleted: Vec<DeletedItem>,
+    pub failed: Vec<BatchItemFailure>,
+    pub cancelled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RestoreReport {
+    pub restored: Vec<RestoredItem>,
+    pub failed: Vec<BatchItemFailure>,
+    pub cancelled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PurgeReport {
+    pub purged: Vec<String>,
+    pub failed: Vec<BatchItemFailure>,
+    pub cancelled: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

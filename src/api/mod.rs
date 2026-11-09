@@ -142,6 +142,85 @@ impl AppNative {
         })
         .await
     }
+
+    /// Reads one installation together with its locally observed Skill state.
+    pub async fn installation_detail(id: String) -> std::result::Result<JsonValue, JsError> {
+        run_json(move || {
+            let state = app_state()?;
+            installations::installation_detail(&state.repo, &state.store, &id)
+        })
+        .await
+    }
+
+    /// Queues a rename and returns its operation ID.
+    pub fn rename_installation(
+        id: String,
+        new_name: String,
+    ) -> std::result::Result<JsonValue, JsError> {
+        let state = app_state().map_err(js_error)?;
+        let operation = operations()
+            .enqueue(OperationKind::Rename, move |context| {
+                installations::rename_installation(
+                    &state.repo,
+                    &state.store,
+                    &id,
+                    &new_name,
+                    &context,
+                )
+            })
+            .map_err(js_error)?;
+        to_json(operation)
+    }
+
+    /// Queues a batch delete; modified installations require explicit confirmation.
+    pub fn delete_installations(
+        ids: JsonValue,
+        confirm_modified: bool,
+    ) -> std::result::Result<JsonValue, JsError> {
+        let ids = parse_id_list(ids).map_err(js_error)?;
+        let state = app_state().map_err(js_error)?;
+        let operation = operations()
+            .enqueue(OperationKind::Delete, move |context| {
+                installations::delete_installations(
+                    &state.repo,
+                    &state.store,
+                    &ids,
+                    confirm_modified,
+                    &context,
+                )
+            })
+            .map_err(js_error)?;
+        to_json(operation)
+    }
+
+    /// Lists trash entries that can still be restored or purged.
+    pub async fn list_trash() -> std::result::Result<JsonValue, JsError> {
+        run_json(|| app_state()?.store.trash_entries()).await
+    }
+
+    /// Restores trash entries to their original installation paths.
+    pub fn restore_trash(ids: JsonValue) -> std::result::Result<JsonValue, JsError> {
+        let ids = parse_id_list(ids).map_err(js_error)?;
+        let state = app_state().map_err(js_error)?;
+        let operation = operations()
+            .enqueue(OperationKind::Restore, move |context| {
+                installations::restore_trash(&state.repo, &state.store, &ids, &context)
+            })
+            .map_err(js_error)?;
+        to_json(operation)
+    }
+
+    /// Permanently deletes trash entries and their files.
+    pub fn purge_trash(ids: JsonValue) -> std::result::Result<JsonValue, JsError> {
+        let ids = parse_id_list(ids).map_err(js_error)?;
+        let state = app_state().map_err(js_error)?;
+        let operation = operations()
+            .enqueue(OperationKind::PurgeTrash, move |context| {
+                installations::purge_trash(&state.repo, &state.store, &ids, &context)
+            })
+            .map_err(js_error)?;
+        to_json(operation)
+    }
 }
 
 fn app_state() -> Result<Arc<AppState>> {
@@ -167,6 +246,11 @@ fn parse_category(value: &str) -> Result<Category> {
         "local" => Ok(Category::Local),
         _ => Err(AppError::invalid_input("unknown installation category")),
     }
+}
+
+fn parse_id_list(value: JsonValue) -> Result<Vec<String>> {
+    serde_json::from_value(value)
+        .map_err(|error| AppError::invalid_input(format!("invalid id list: {error}")))
 }
 
 async fn run_json<T>(

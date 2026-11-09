@@ -71,6 +71,10 @@ impl CentralRepo {
     pub fn installation_path(&self, category: Category, relative: &str) -> Result<PathBuf> {
         resolve_within(&self.skills_root(category), relative)
     }
+
+    pub fn trash_path(&self, relative: &str) -> Result<PathBuf> {
+        resolve_within(&self.trash_dir(), relative)
+    }
 }
 
 pub fn resolve_within(base: &Path, relative: &str) -> Result<PathBuf> {

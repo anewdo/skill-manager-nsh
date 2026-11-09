@@ -15,16 +15,33 @@ pub struct ContentEntry {
     pub path: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContentSummary {
+    pub hash: String,
+    pub file_count: u64,
+    pub total_bytes: u64,
+}
+
 pub fn content_hash(root: &Path) -> Result<String> {
+    Ok(content_summary(root)?.hash)
+}
+
+pub fn content_summary(root: &Path) -> Result<ContentSummary> {
     let entries = content_entries(root)?;
     let mut hasher = Sha256::new();
-    for entry in entries {
+    let mut total_bytes = 0_u64;
+    for entry in &entries {
         write_frame(&mut hasher, entry.relative_path.as_bytes());
         let content = fs::read(&entry.path)?;
+        total_bytes += content.len() as u64;
         let normalized = normalize_content(&content);
         write_frame(&mut hasher, normalized.as_ref());
     }
-    Ok(hex::encode(hasher.finalize()))
+    Ok(ContentSummary {
+        hash: hex::encode(hasher.finalize()),
+        file_count: entries.len() as u64,
+        total_bytes,
+    })
 }
 
 pub fn files_identical(left: &Path, right: &Path) -> Result<bool> {

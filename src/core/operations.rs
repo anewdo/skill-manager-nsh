@@ -313,8 +313,39 @@ fn lock_state(shared: &Shared) -> MutexGuard<'_, State> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-fn cancelled_error() -> AppError {
+pub(crate) fn cancelled_error() -> AppError {
     AppError::new(ErrorCode::Cancelled, "operation was cancelled")
+}
+
+#[cfg(test)]
+pub(crate) fn test_context(cancelled: bool) -> OperationContext {
+    let (events, _) = broadcast::channel(EVENT_CAPACITY);
+    let id = Uuid::new_v4().to_string();
+    let control = Arc::new(AtomicBool::new(cancelled));
+    let now = now_millis();
+    let snapshot = OperationSnapshot {
+        id: id.clone(),
+        kind: OperationKind::Rename,
+        state: OperationState::Running,
+        cancel_requested: cancelled,
+        progress: None,
+        result: None,
+        error: None,
+        created_at: now,
+        updated_at: now,
+    };
+    let mut state = State::default();
+    state.snapshots.insert(id.clone(), snapshot);
+    state.controls.insert(id.clone(), control.clone());
+    state.running = Some(id.clone());
+    OperationContext {
+        id,
+        control,
+        shared: Arc::new(Shared {
+            state: Mutex::new(state),
+            events,
+        }),
+    }
 }
 
 fn is_terminal(state: OperationState) -> bool {

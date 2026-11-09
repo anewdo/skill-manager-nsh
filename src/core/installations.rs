@@ -6,16 +6,20 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use super::central_repo::CentralRepo;
-use super::content_identity::{content_hash, files_identical};
+use super::content_identity::{ContentSummary, content_hash, content_summary, files_identical};
 use super::error::{AppError, ErrorCode, Result};
+use super::metadata;
 use super::model::{
-    Category, Installation, LocalState, OperationProgress, ProxySettings, SkillSource, SourceType,
-    UpdateState,
+    BatchItemFailure, Category, DeleteReport, DeletedItem, Installation, InstallationDetail,
+    LocalSkillInfo, LocalState, OperationProgress, ProxySettings, PurgeReport, RestoreReport,
+    RestoredItem, SkillSource, SourceType, TrashEntry, UpdateState,
 };
-use super::naming::{allocate_marketplace_name, root_key};
+use super::naming::{RenameKind, allocate_marketplace_name, classify_rename, root_key};
 use super::operations::OperationContext;
 use super::sources::{DownloadedSkill, download, preview::canonical_source};
 use super::store::Store;
+
+const MAX_LOCAL_SKILL_MD_BYTES: u64 = 1024 * 1024;
 
 pub fn install_marketplace(
     repo: &CentralRepo,
@@ -237,6 +241,567 @@ fn cleanup_parent_directories(created: &[PathBuf]) {
     }
 }
 
+pub fn installation_detail(
+    repo: &CentralRepo,
+    store: &Store,
+    id: &str,
+) -> Result<InstallationDetail> {
+    let installation = store.installation(id)?.ok_or_else(installation_not_found)?;
+    let inspection = inspect_local(repo, &installation)?;
+    store.update_local_state(
+        id,
+        inspection
+            .summary
+            .as_ref()
+            .map(|summary| summary.hash.as_str()),
+        inspection.state,
+        Utc::now().timestamp_millis(),
+    )?;
+    let installation = store.installation(id)?.ok_or_else(installation_not_found)?;
+    Ok(InstallationDetail {
+        installation,
+        local: local_skill_info(&inspection),
+    })
+}
+
+pub fn rename_installation(
+    repo: &CentralRepo,
+    store: &Store,
+    id: &str,
+    new_name: &str,
+    context: &OperationContext,
+) -> Result<Installation> {
+    context.progress(progress("renaming", true))?;
+    let installation = store.installation(id)?.ok_or_else(installation_not_found)?;
+    let kind = classify_rename(last_component(&installation.root_relpath), new_name)?;
+    if kind == RenameKind::Same {
+        return Ok(installation);
+    }
+
+    let new_relpath = replace_last_component(&installation.root_relpath, new_name);
+    let new_root_key = root_key(&new_relpath);
+    reject_root_key_conflict(store, &installation, &new_root_key, &new_relpath)?;
+
+    let source = repo.installation_path(installation.category, &installation.root_relpath)?;
+    let target = repo.installation_path(installation.category, &new_relpath)?;
+    ensure_directory(&source, &installation.root_relpath)?;
+    if !(cfg!(windows) && kind == RenameKind::CaseOnly) {
+        ensure_target_missing(&target, &new_relpath)?;
+    }
+
+    let current = store.installation(id)?.ok_or_else(installation_not_found)?;
+    if current.root_relpath != installation.root_relpath {
+        return Err(AppError::new(
+            ErrorCode::Conflict,
+            "installation was renamed by another operation",
+        ));
+    }
+    context.check_cancelled()?;
+
+    move_path(&source, &target, kind == RenameKind::CaseOnly)?;
+    if let Err(error) = store.update_installation_rename(
+        id,
+        new_name,
+        &new_relpath,
+        &new_root_key,
+        Utc::now().timestamp_millis(),
+    ) {
+        if let Err(rollback) = move_path(&target, &source, kind == RenameKind::CaseOnly) {
+            return Err(AppError::internal(format!(
+                "database update failed ({error}); restoring the original directory also failed ({rollback}); files remain at {}",
+                target.display()
+            )));
+        }
+        return Err(error);
+    }
+
+    context.installations_changed();
+    store
+        .installation(id)?
+        .ok_or_else(|| AppError::internal("installation disappeared after rename"))
+}
+
+pub fn delete_installations(
+    repo: &CentralRepo,
+    store: &Store,
+    ids: &[String],
+    confirm_modified: bool,
+    context: &OperationContext,
+) -> Result<DeleteReport> {
+    if ids.is_empty() {
+        return Err(AppError::invalid_input(
+            "at least one installation id is required",
+        ));
+    }
+    let mut report = DeleteReport {
+        deleted: Vec::new(),
+        failed: Vec::new(),
+        cancelled: false,
+    };
+    let total = ids.len() as u64;
+
+    for (index, id) in ids.iter().enumerate() {
+        match context.progress(batch_progress("deleting", index as u64, total, true)) {
+            Ok(()) => {}
+            Err(error) if error.code == ErrorCode::Cancelled => {
+                if index == 0 {
+                    return Err(error);
+                }
+                report.cancelled = true;
+                break;
+            }
+            Err(error) => return Err(error),
+        }
+        match delete_one(repo, store, id, confirm_modified) {
+            Ok(item) => {
+                context.installations_changed();
+                report.deleted.push(item);
+            }
+            Err(error) => report.failed.push(BatchItemFailure {
+                id: id.clone(),
+                error,
+            }),
+        }
+    }
+    Ok(report)
+}
+
+pub fn restore_trash(
+    repo: &CentralRepo,
+    store: &Store,
+    trash_ids: &[String],
+    context: &OperationContext,
+) -> Result<RestoreReport> {
+    if trash_ids.is_empty() {
+        return Err(AppError::invalid_input(
+            "at least one trash entry id is required",
+        ));
+    }
+    let mut report = RestoreReport {
+        restored: Vec::new(),
+        failed: Vec::new(),
+        cancelled: false,
+    };
+    let total = trash_ids.len() as u64;
+
+    for (index, id) in trash_ids.iter().enumerate() {
+        match context.progress(batch_progress("restoring", index as u64, total, true)) {
+            Ok(()) => {}
+            Err(error) if error.code == ErrorCode::Cancelled => {
+                if index == 0 {
+                    return Err(error);
+                }
+                report.cancelled = true;
+                break;
+            }
+            Err(error) => return Err(error),
+        }
+        match restore_one(repo, store, id) {
+            Ok(item) => {
+                context.installations_changed();
+                report.restored.push(item);
+            }
+            Err(error) => report.failed.push(BatchItemFailure {
+                id: id.clone(),
+                error,
+            }),
+        }
+    }
+    Ok(report)
+}
+
+pub fn purge_trash(
+    repo: &CentralRepo,
+    store: &Store,
+    trash_ids: &[String],
+    context: &OperationContext,
+) -> Result<PurgeReport> {
+    if trash_ids.is_empty() {
+        return Err(AppError::invalid_input(
+            "at least one trash entry id is required",
+        ));
+    }
+    let mut report = PurgeReport {
+        purged: Vec::new(),
+        failed: Vec::new(),
+        cancelled: false,
+    };
+    let total = trash_ids.len() as u64;
+
+    for (index, id) in trash_ids.iter().enumerate() {
+        match context.progress(batch_progress("purging", index as u64, total, true)) {
+            Ok(()) => {}
+            Err(error) if error.code == ErrorCode::Cancelled => {
+                if index == 0 {
+                    return Err(error);
+                }
+                report.cancelled = true;
+                break;
+            }
+            Err(error) => return Err(error),
+        }
+        match purge_one(repo, store, id) {
+            Ok(()) => report.purged.push(id.clone()),
+            Err(error) => report.failed.push(BatchItemFailure {
+                id: id.clone(),
+                error,
+            }),
+        }
+    }
+    Ok(report)
+}
+
+struct LocalInspection {
+    path: PathBuf,
+    state: LocalState,
+    summary: Option<ContentSummary>,
+}
+
+fn inspect_local(repo: &CentralRepo, installation: &Installation) -> Result<LocalInspection> {
+    let path = repo.installation_path(installation.category, &installation.root_relpath)?;
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(LocalInspection {
+                path,
+                state: LocalState::Missing,
+                summary: None,
+            });
+        }
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(AppError::unsafe_path(format!(
+            "installation root must be a real directory: {}",
+            path.display()
+        )));
+    }
+
+    let summary = content_summary(&path)?;
+    let state = match installation.baseline_hash.as_deref() {
+        Some(baseline) if baseline == summary.hash => LocalState::Clean,
+        Some(_) => LocalState::Modified,
+        None => LocalState::Unknown,
+    };
+    Ok(LocalInspection {
+        path,
+        state,
+        summary: Some(summary),
+    })
+}
+
+fn local_skill_info(inspection: &LocalInspection) -> LocalSkillInfo {
+    let mut info = LocalSkillInfo {
+        state: inspection.state,
+        path: inspection.path.display().to_string(),
+        current_hash: inspection
+            .summary
+            .as_ref()
+            .map(|summary| summary.hash.clone()),
+        file_count: inspection
+            .summary
+            .as_ref()
+            .map(|summary| summary.file_count),
+        total_bytes: inspection
+            .summary
+            .as_ref()
+            .map(|summary| summary.total_bytes),
+        metadata: None,
+        skill_md: None,
+        skill_md_error: None,
+        inspected_at: Utc::now().timestamp_millis(),
+    };
+    if inspection.summary.is_none() {
+        return info;
+    }
+    match read_skill_md_limited(&inspection.path) {
+        Ok(Some(content)) => {
+            match metadata::parse_skill_md_content(&content, "SKILL.md") {
+                Ok(metadata) => info.metadata = Some(metadata),
+                Err(error) => info.skill_md_error = Some(error),
+            }
+            info.skill_md = Some(content);
+        }
+        Ok(None) => {}
+        Err(error) => info.skill_md_error = Some(error),
+    }
+    info
+}
+
+fn read_skill_md_limited(root: &Path) -> Result<Option<String>> {
+    let path = root.join("SKILL.md");
+    let metadata = match fs::metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.len() > MAX_LOCAL_SKILL_MD_BYTES {
+        return Err(skill_md_too_large());
+    }
+    let bytes = fs::read(&path)?;
+    if bytes.len() as u64 > MAX_LOCAL_SKILL_MD_BYTES {
+        return Err(skill_md_too_large());
+    }
+    String::from_utf8(bytes)
+        .map(Some)
+        .map_err(|_| AppError::new(ErrorCode::InvalidSkill, "SKILL.md is not UTF-8"))
+}
+
+fn skill_md_too_large() -> AppError {
+    AppError::new(
+        ErrorCode::InvalidSkill,
+        "SKILL.md exceeds the 1 MiB detail limit",
+    )
+}
+
+fn delete_one(
+    repo: &CentralRepo,
+    store: &Store,
+    id: &str,
+    confirm_modified: bool,
+) -> Result<DeletedItem> {
+    let installation = store.installation(id)?.ok_or_else(installation_not_found)?;
+    let inspection = inspect_local(repo, &installation)?;
+
+    if inspection.state == LocalState::Modified && !confirm_modified {
+        store.update_local_state(
+            id,
+            inspection
+                .summary
+                .as_ref()
+                .map(|summary| summary.hash.as_str()),
+            LocalState::Modified,
+            Utc::now().timestamp_millis(),
+        )?;
+        return Err(AppError::new(
+            ErrorCode::LocalModified,
+            "local changes must be confirmed before deleting this installation",
+        )
+        .with_details(serde_json::json!({
+            "installationId": installation.id,
+            "displayName": installation.display_name,
+        })));
+    }
+
+    if inspection.summary.is_none() {
+        store.delete_installation_record(id)?;
+        return Ok(DeletedItem {
+            id: installation.id,
+            display_name: installation.display_name,
+            trashed: false,
+        });
+    }
+
+    let trash_relpath = Uuid::new_v4().to_string();
+    let trash_path = repo.trash_path(&trash_relpath)?;
+    ensure_target_missing(&trash_path, &trash_relpath)?;
+    fs::rename(&inspection.path, &trash_path)?;
+
+    let mut installation = installation;
+    installation.current_hash = inspection
+        .summary
+        .as_ref()
+        .map(|summary| summary.hash.clone());
+    installation.local_state = inspection.state;
+    let entry = TrashEntry {
+        id: trash_relpath.clone(),
+        installation_id: installation.id.clone(),
+        category: installation.category,
+        display_name: installation.display_name.clone(),
+        original_relpath: installation.root_relpath.clone(),
+        original_root_key: installation.root_key.clone(),
+        trash_relpath,
+        installation,
+        deleted_at: Utc::now().timestamp_millis(),
+    };
+    if let Err(error) = store.trash_installation(&entry) {
+        if let Err(rollback) = fs::rename(&trash_path, &inspection.path) {
+            return Err(AppError::internal(format!(
+                "database delete failed ({error}); restoring the installation directory also failed ({rollback}); files remain at {}",
+                trash_path.display()
+            )));
+        }
+        return Err(error);
+    }
+    Ok(DeletedItem {
+        id: entry.installation_id,
+        display_name: entry.display_name,
+        trashed: true,
+    })
+}
+
+fn restore_one(repo: &CentralRepo, store: &Store, trash_id: &str) -> Result<RestoredItem> {
+    let entry = store
+        .trash_entry(trash_id)?
+        .ok_or_else(trash_entry_not_found)?;
+    let target = repo.installation_path(entry.category, &entry.original_relpath)?;
+    ensure_target_missing(&target, &entry.original_relpath)?;
+    reject_restore_conflicts(store, &entry)?;
+
+    let trash_path = repo.trash_path(&entry.trash_relpath)?;
+    ensure_directory(&trash_path, &entry.trash_relpath)?;
+    fs::rename(&trash_path, &target)?;
+
+    let mut installation = entry.installation.clone();
+    installation.updated_at = Utc::now().timestamp_millis();
+    if let Err(error) = store.restore_trash_entry(&entry.id, &installation) {
+        if let Err(rollback) = fs::rename(&target, &trash_path) {
+            return Err(AppError::internal(format!(
+                "database restore failed ({error}); moving files back to trash also failed ({rollback}); files remain at {}",
+                target.display()
+            )));
+        }
+        return Err(error);
+    }
+    Ok(RestoredItem {
+        trash_id: entry.id,
+        installation_id: installation.id,
+        display_name: installation.display_name,
+    })
+}
+
+fn purge_one(repo: &CentralRepo, store: &Store, trash_id: &str) -> Result<()> {
+    let entry = store
+        .trash_entry(trash_id)?
+        .ok_or_else(trash_entry_not_found)?;
+    let path = repo.trash_path(&entry.trash_relpath)?;
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(AppError::unsafe_path(format!(
+                "symbolic links are not allowed: {}",
+                path.display()
+            )));
+        }
+        Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(&path)?,
+        Ok(_) => {
+            return Err(AppError::new(
+                ErrorCode::Conflict,
+                "trash entry is not a directory",
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    store.delete_trash_entry(&entry.id)?;
+    Ok(())
+}
+
+fn reject_root_key_conflict(
+    store: &Store,
+    installation: &Installation,
+    new_root_key: &str,
+    new_relpath: &str,
+) -> Result<()> {
+    let conflict = store
+        .list_installations(installation.category)?
+        .into_iter()
+        .any(|other| other.id != installation.id && other.root_key == new_root_key);
+    if conflict {
+        return Err(AppError::new(
+            ErrorCode::Conflict,
+            format!("installation target already exists: {new_relpath}"),
+        ));
+    }
+    Ok(())
+}
+
+fn reject_restore_conflicts(store: &Store, entry: &TrashEntry) -> Result<()> {
+    let existing = store.list_installations(entry.category)?;
+    if existing
+        .iter()
+        .any(|installation| installation.root_key == entry.original_root_key)
+    {
+        return Err(AppError::new(
+            ErrorCode::Conflict,
+            format!(
+                "installation target already exists: {}",
+                entry.original_relpath
+            ),
+        )
+        .with_details(serde_json::json!({ "relpath": entry.original_relpath })));
+    }
+    if let Some(source_key) = entry
+        .installation
+        .source
+        .as_ref()
+        .map(|source| source.source_key.as_str())
+        && existing.iter().any(|installation| {
+            installation
+                .source
+                .as_ref()
+                .is_some_and(|source| source.source_key == source_key)
+        })
+    {
+        return Err(
+            AppError::new(ErrorCode::Conflict, "this source is already installed")
+                .with_details(serde_json::json!({ "sourceKey": source_key })),
+        );
+    }
+    Ok(())
+}
+
+fn ensure_directory(path: &Path, relative: &str) -> Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_dir() => Ok(()),
+        Ok(_) => Err(AppError::new(
+            ErrorCode::Conflict,
+            format!("installation path is not a directory: {relative}"),
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Err(AppError::new(
+            ErrorCode::NotFound,
+            format!("installation files are missing: {relative}"),
+        )),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn move_path(from: &Path, to: &Path, case_only: bool) -> Result<()> {
+    if !case_only {
+        return fs::rename(from, to).map_err(Into::into);
+    }
+    let parent = to
+        .parent()
+        .ok_or_else(|| AppError::unsafe_path("rename target has no parent"))?;
+    let intermediate = parent.join(format!(".skills-manager-rename-{}", Uuid::new_v4()));
+    fs::rename(from, &intermediate)?;
+    match fs::rename(&intermediate, to) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = fs::rename(&intermediate, from);
+            Err(error.into())
+        }
+    }
+}
+
+fn last_component(relative: &str) -> &str {
+    relative.rsplit(['/', '\\']).next().unwrap_or(relative)
+}
+
+fn replace_last_component(relative: &str, new_name: &str) -> String {
+    match relative.rsplit_once('/') {
+        Some((parent, _)) => format!("{parent}/{new_name}"),
+        None => new_name.to_owned(),
+    }
+}
+
+fn batch_progress(phase: &str, current: u64, total: u64, cancellable: bool) -> OperationProgress {
+    OperationProgress {
+        phase: phase.to_string(),
+        current: Some(current),
+        total: Some(total),
+        detail: None,
+        cancellable,
+    }
+}
+
+fn installation_not_found() -> AppError {
+    AppError::new(ErrorCode::NotFound, "installation was not found")
+}
+
+fn trash_entry_not_found() -> AppError {
+    AppError::new(ErrorCode::NotFound, "trash entry was not found")
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -329,6 +894,116 @@ mod tests {
         };
         store.insert_installation(&installation).unwrap();
         installation
+    }
+
+    fn add_scoped_existing(
+        repo: &CentralRepo,
+        store: &Store,
+        id: &str,
+        source: SkillSource,
+        root_relpath: &str,
+    ) -> Installation {
+        let path = repo
+            .installation_path(Category::Marketplace, root_relpath)
+            .unwrap();
+        let name = last_component(root_relpath);
+        write_skill(&path, name, "scoped");
+        let hash = content_hash(&path).unwrap();
+        let installation = Installation {
+            id: id.to_string(),
+            category: Category::Marketplace,
+            display_name: name.to_string(),
+            root_relpath: root_relpath.to_string(),
+            root_key: root_key(root_relpath),
+            source: Some(source),
+            installed_revision: Some("b".repeat(40)),
+            remote_revision: None,
+            baseline_hash: Some(hash.clone()),
+            current_hash: Some(hash),
+            local_state: LocalState::Clean,
+            update_state: UpdateState::Unknown,
+            update_checked_at: None,
+            created_at: 1,
+            updated_at: 1,
+            last_error: None,
+        };
+        store.insert_installation(&installation).unwrap();
+        installation
+    }
+
+    fn run_rename(
+        repo: &CentralRepo,
+        store: &Arc<Store>,
+        id: &str,
+        new_name: &str,
+    ) -> OperationSnapshot {
+        let queue = OperationQueue::new();
+        let job_repo = repo.clone();
+        let job_store = store.clone();
+        let job_id = id.to_string();
+        let job_name = new_name.to_string();
+        let operation = queue
+            .enqueue(OperationKind::Rename, move |context| {
+                rename_installation(&job_repo, &job_store, &job_id, &job_name, &context)
+            })
+            .unwrap();
+        wait_terminal(&queue, &operation)
+    }
+
+    fn run_delete(
+        repo: &CentralRepo,
+        store: &Arc<Store>,
+        ids: &[&str],
+        confirm_modified: bool,
+    ) -> OperationSnapshot {
+        let queue = OperationQueue::new();
+        let job_repo = repo.clone();
+        let job_store = store.clone();
+        let job_ids = ids.iter().map(|id| (*id).to_string()).collect::<Vec<_>>();
+        let operation = queue
+            .enqueue(OperationKind::Delete, move |context| {
+                delete_installations(&job_repo, &job_store, &job_ids, confirm_modified, &context)
+            })
+            .unwrap();
+        wait_terminal(&queue, &operation)
+    }
+
+    fn run_restore(repo: &CentralRepo, store: &Arc<Store>, ids: &[&str]) -> OperationSnapshot {
+        let queue = OperationQueue::new();
+        let job_repo = repo.clone();
+        let job_store = store.clone();
+        let job_ids = ids.iter().map(|id| (*id).to_string()).collect::<Vec<_>>();
+        let operation = queue
+            .enqueue(OperationKind::Restore, move |context| {
+                restore_trash(&job_repo, &job_store, &job_ids, &context)
+            })
+            .unwrap();
+        wait_terminal(&queue, &operation)
+    }
+
+    fn run_purge(repo: &CentralRepo, store: &Arc<Store>, ids: &[&str]) -> OperationSnapshot {
+        let queue = OperationQueue::new();
+        let job_repo = repo.clone();
+        let job_store = store.clone();
+        let job_ids = ids.iter().map(|id| (*id).to_string()).collect::<Vec<_>>();
+        let operation = queue
+            .enqueue(OperationKind::PurgeTrash, move |context| {
+                purge_trash(&job_repo, &job_store, &job_ids, &context)
+            })
+            .unwrap();
+        wait_terminal(&queue, &operation)
+    }
+
+    fn stored(store: &Store, id: &str) -> Installation {
+        store
+            .installation(id)
+            .unwrap()
+            .unwrap_or_else(|| panic!("installation {id} should exist"))
+    }
+
+    fn installation_path(repo: &CentralRepo, relative: &str) -> PathBuf {
+        repo.installation_path(Category::Marketplace, relative)
+            .unwrap()
     }
 
     fn wait_terminal(queue: &OperationQueue, id: &str) -> OperationSnapshot {
@@ -574,5 +1249,668 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(fs::read_dir(repo.staging_dir()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn detail_reports_clean_modified_and_missing_local_state() {
+        let (_temp, repo, store) = setup();
+        let installation = add_existing(
+            &repo,
+            &store,
+            "one",
+            source("owner/repo"),
+            "demo",
+            "original",
+        );
+        let baseline = installation.baseline_hash.clone();
+
+        let detail = installation_detail(&repo, &store, "one").unwrap();
+        assert_eq!(detail.local.state, LocalState::Clean);
+        assert_eq!(detail.installation.local_state, LocalState::Clean);
+        assert_eq!(detail.local.metadata.as_ref().unwrap().name, "demo");
+        assert!(
+            detail
+                .local
+                .skill_md
+                .as_ref()
+                .unwrap()
+                .contains("description: Demo skill")
+        );
+        assert_eq!(detail.local.file_count, Some(1));
+        assert!(detail.local.total_bytes.unwrap() > 0);
+        assert!(detail.local.path.ends_with("demo"));
+
+        let path = installation_path(&repo, "demo");
+        fs::write(
+            path.join("SKILL.md"),
+            "---\nname: demo\ndescription: Demo skill\n---\nchanged",
+        )
+        .unwrap();
+        let detail = installation_detail(&repo, &store, "one").unwrap();
+        assert_eq!(detail.local.state, LocalState::Modified);
+        assert_ne!(detail.installation.current_hash, baseline);
+        assert_eq!(detail.installation.baseline_hash, baseline);
+        assert_eq!(detail.installation.local_state, LocalState::Modified);
+
+        fs::remove_dir_all(&path).unwrap();
+        let detail = installation_detail(&repo, &store, "one").unwrap();
+        assert_eq!(detail.local.state, LocalState::Missing);
+        assert!(detail.local.skill_md.is_none());
+        assert!(detail.local.metadata.is_none());
+        assert_eq!(detail.local.file_count, None);
+        assert_eq!(detail.installation.current_hash, None);
+        assert_eq!(detail.installation.baseline_hash, baseline);
+        assert_eq!(detail.installation.local_state, LocalState::Missing);
+    }
+
+    #[test]
+    fn detail_rejects_paths_that_escape_the_central_repository() {
+        let (_temp, repo, store) = setup();
+        add_existing(
+            &repo,
+            &store,
+            "one",
+            source("owner/repo"),
+            "demo",
+            "original",
+        );
+        store
+            .update_installation_rename("one", "demo", "../escape", "../escape", 2)
+            .unwrap();
+
+        let error = installation_detail(&repo, &store, "one").unwrap_err();
+        assert_eq!(error.code, ErrorCode::UnsafePath);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn detail_rejects_symbolic_linked_installation_roots() {
+        use std::os::unix::fs::symlink;
+
+        let (temp, repo, store) = setup();
+        add_existing(
+            &repo,
+            &store,
+            "one",
+            source("owner/repo"),
+            "demo",
+            "original",
+        );
+        let path = installation_path(&repo, "demo");
+        let outside = temp.path().join("outside");
+        write_skill(&outside, "demo", "outside");
+        fs::remove_dir_all(&path).unwrap();
+        symlink(&outside, &path).unwrap();
+
+        let error = installation_detail(&repo, &store, "one").unwrap_err();
+        assert_eq!(error.code, ErrorCode::UnsafePath);
+    }
+
+    #[test]
+    fn detail_limits_the_skill_document_size() {
+        let (_temp, repo, store) = setup();
+        add_existing(
+            &repo,
+            &store,
+            "one",
+            source("owner/repo"),
+            "demo",
+            "original",
+        );
+        let path = installation_path(&repo, "demo");
+        fs::write(
+            path.join("SKILL.md"),
+            vec![b'a'; MAX_LOCAL_SKILL_MD_BYTES as usize + 1],
+        )
+        .unwrap();
+
+        let detail = installation_detail(&repo, &store, "one").unwrap();
+        assert_eq!(detail.local.state, LocalState::Modified);
+        assert!(detail.local.skill_md.is_none());
+        assert!(detail.local.metadata.is_none());
+        assert_eq!(
+            detail.local.skill_md_error.unwrap().code,
+            ErrorCode::InvalidSkill
+        );
+    }
+
+    #[test]
+    fn rename_moves_the_directory_and_updates_identity_fields() {
+        let (_temp, repo, store) = setup();
+        let original = add_existing(
+            &repo,
+            &store,
+            "one",
+            source("owner/repo"),
+            "demo",
+            "content",
+        );
+
+        let snapshot = run_rename(&repo, &store, "one", "renamed");
+
+        assert_eq!(snapshot.state, OperationState::Succeeded);
+        let renamed: Installation = serde_json::from_value(snapshot.result.unwrap()).unwrap();
+        assert_eq!(renamed.id, original.id);
+        assert_eq!(renamed.display_name, "renamed");
+        assert_eq!(renamed.root_relpath, "renamed");
+        assert_eq!(renamed.root_key, "renamed");
+        assert_eq!(renamed.source, original.source);
+        assert_eq!(renamed.baseline_hash, original.baseline_hash);
+        assert_eq!(renamed.installed_revision, original.installed_revision);
+        assert!(!installation_path(&repo, "demo").exists());
+        assert!(
+            installation_path(&repo, "renamed")
+                .join("SKILL.md")
+                .is_file()
+        );
+        assert_eq!(stored(&store, "one").display_name, "renamed");
+    }
+
+    #[test]
+    fn rename_keeps_the_scoped_parent_and_replaces_the_last_component() {
+        let (_temp, repo, store) = setup();
+        add_scoped_existing(
+            &repo,
+            &store,
+            "one",
+            source("owner/repo"),
+            "@owner/repo/demo",
+        );
+
+        let snapshot = run_rename(&repo, &store, "one", "renamed");
+
+        assert_eq!(snapshot.state, OperationState::Succeeded);
+        let renamed = stored(&store, "one");
+        assert_eq!(renamed.display_name, "renamed");
+        assert_eq!(renamed.root_relpath, "@owner/repo/renamed");
+        assert_eq!(renamed.root_key, root_key("@owner/repo/renamed"));
+        assert!(
+            installation_path(&repo, "@owner/repo/renamed")
+                .join("SKILL.md")
+                .is_file()
+        );
+        assert!(!installation_path(&repo, "@owner/repo/demo").exists());
+    }
+
+    #[test]
+    fn case_only_rename_uses_a_safe_intermediate_path() {
+        let (_temp, repo, store) = setup();
+        let original = add_existing(
+            &repo,
+            &store,
+            "one",
+            source("owner/repo"),
+            "demo",
+            "content",
+        );
+
+        let snapshot = run_rename(&repo, &store, "one", "DEMO");
+
+        assert_eq!(snapshot.state, OperationState::Succeeded);
+        let renamed = stored(&store, "one");
+        assert_eq!(renamed.display_name, "DEMO");
+        assert_eq!(renamed.root_relpath, "DEMO");
+        let root = repo.skills_root(Category::Marketplace);
+        assert!(
+            fs::read_dir(&root)
+                .unwrap()
+                .any(|entry| entry.unwrap().file_name() == "DEMO")
+        );
+        let path = installation_path(&repo, "DEMO");
+        assert!(path.join("SKILL.md").is_file());
+        assert_eq!(
+            content_hash(&path).unwrap(),
+            original.baseline_hash.unwrap()
+        );
+    }
+
+    #[test]
+    fn renaming_to_the_current_name_is_a_no_op() {
+        let (_temp, repo, store) = setup();
+        let original = add_existing(
+            &repo,
+            &store,
+            "one",
+            source("owner/repo"),
+            "demo",
+            "content",
+        );
+
+        let snapshot = run_rename(&repo, &store, "one", "demo");
+
+        assert_eq!(snapshot.state, OperationState::Succeeded);
+        let result: Installation = serde_json::from_value(snapshot.result.unwrap()).unwrap();
+        assert_eq!(result, original);
+        assert!(installation_path(&repo, "demo").join("SKILL.md").is_file());
+    }
+
+    #[test]
+    fn rename_rejects_unsafe_names_without_touching_files() {
+        let (_temp, repo, store) = setup();
+        add_existing(
+            &repo,
+            &store,
+            "one",
+            source("owner/repo"),
+            "demo",
+            "content",
+        );
+
+        let snapshot = run_rename(&repo, &store, "one", "bad/name");
+
+        assert_eq!(snapshot.state, OperationState::Failed);
+        assert_eq!(snapshot.error.unwrap().code, ErrorCode::InvalidInput);
+        assert!(installation_path(&repo, "demo").join("SKILL.md").is_file());
+        assert_eq!(stored(&store, "one").root_relpath, "demo");
+    }
+
+    #[test]
+    fn rename_conflicts_when_the_target_root_key_is_taken() {
+        let (_temp, repo, store) = setup();
+        add_existing(
+            &repo,
+            &store,
+            "one",
+            source("owner/repo"),
+            "demo",
+            "content",
+        );
+        add_existing(
+            &repo,
+            &store,
+            "two",
+            source("owner/other"),
+            "other",
+            "content",
+        );
+
+        let snapshot = run_rename(&repo, &store, "one", "other");
+
+        assert_eq!(snapshot.state, OperationState::Failed);
+        assert_eq!(snapshot.error.unwrap().code, ErrorCode::Conflict);
+        assert_eq!(stored(&store, "one").root_relpath, "demo");
+        assert_eq!(stored(&store, "two").root_relpath, "other");
+        assert!(installation_path(&repo, "demo").join("SKILL.md").is_file());
+        assert!(installation_path(&repo, "other").join("SKILL.md").is_file());
+    }
+
+    #[test]
+    fn rename_fails_when_the_local_directory_is_missing() {
+        let (_temp, repo, store) = setup();
+        add_existing(
+            &repo,
+            &store,
+            "one",
+            source("owner/repo"),
+            "demo",
+            "content",
+        );
+        fs::remove_dir_all(installation_path(&repo, "demo")).unwrap();
+
+        let snapshot = run_rename(&repo, &store, "one", "renamed");
+
+        assert_eq!(snapshot.state, OperationState::Failed);
+        assert_eq!(snapshot.error.unwrap().code, ErrorCode::NotFound);
+        assert_eq!(stored(&store, "one").root_relpath, "demo");
+        assert!(!installation_path(&repo, "renamed").exists());
+    }
+
+    #[test]
+    fn rename_rolls_the_directory_back_when_the_database_update_fails() {
+        let (_temp, repo, store) = setup();
+        add_existing(
+            &repo,
+            &store,
+            "one",
+            source("owner/repo"),
+            "demo",
+            "content",
+        );
+        let connection = rusqlite::Connection::open(repo.database_path()).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TRIGGER reject_rename BEFORE UPDATE ON installations
+                 BEGIN SELECT RAISE(ABORT, 'forced update failure'); END;",
+            )
+            .unwrap();
+        drop(connection);
+
+        let snapshot = run_rename(&repo, &store, "one", "renamed");
+
+        assert_eq!(snapshot.state, OperationState::Failed);
+        assert_eq!(snapshot.error.unwrap().code, ErrorCode::Database);
+        assert!(installation_path(&repo, "demo").join("SKILL.md").is_file());
+        assert!(!installation_path(&repo, "renamed").exists());
+        assert_eq!(stored(&store, "one").root_relpath, "demo");
+    }
+
+    #[test]
+    fn a_cancelled_rename_leaves_files_and_records_untouched() {
+        let (_temp, repo, store) = setup();
+        let original = add_existing(
+            &repo,
+            &store,
+            "one",
+            source("owner/repo"),
+            "demo",
+            "content",
+        );
+        let context = crate::core::operations::test_context(true);
+
+        let error = rename_installation(&repo, &store, "one", "renamed", &context).unwrap_err();
+
+        assert_eq!(error.code, ErrorCode::Cancelled);
+        assert_eq!(store.installation("one").unwrap(), Some(original));
+        assert!(installation_path(&repo, "demo").join("SKILL.md").is_file());
+        assert!(!installation_path(&repo, "renamed").exists());
+    }
+
+    #[test]
+    fn delete_moves_files_to_trash_and_removes_the_record() {
+        let (_temp, repo, store) = setup();
+        add_existing(
+            &repo,
+            &store,
+            "one",
+            source("owner/repo"),
+            "demo",
+            "content",
+        );
+
+        let snapshot = run_delete(&repo, &store, &["one"], false);
+
+        assert_eq!(snapshot.state, OperationState::Succeeded);
+        let report: DeleteReport = serde_json::from_value(snapshot.result.unwrap()).unwrap();
+        assert!(!report.cancelled);
+        assert!(report.failed.is_empty());
+        assert_eq!(report.deleted.len(), 1);
+        assert!(report.deleted[0].trashed);
+        assert!(store.installation("one").unwrap().is_none());
+        assert!(!installation_path(&repo, "demo").exists());
+
+        let entries = store.trash_entries().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].installation_id, "one");
+        assert_eq!(entries[0].original_relpath, "demo");
+        assert_eq!(entries[0].display_name, "demo");
+        assert!(
+            repo.trash_path(&entries[0].trash_relpath)
+                .unwrap()
+                .join("SKILL.md")
+                .is_file()
+        );
+    }
+
+    #[test]
+    fn delete_requires_confirmation_before_discarding_local_changes() {
+        let (_temp, repo, store) = setup();
+        add_existing(
+            &repo,
+            &store,
+            "one",
+            source("owner/repo"),
+            "demo",
+            "content",
+        );
+        let path = installation_path(&repo, "demo");
+        fs::write(
+            path.join("SKILL.md"),
+            "---\nname: demo\ndescription: Demo skill\n---\nedited",
+        )
+        .unwrap();
+
+        let snapshot = run_delete(&repo, &store, &["one"], false);
+
+        assert_eq!(snapshot.state, OperationState::Succeeded);
+        let report: DeleteReport = serde_json::from_value(snapshot.result.unwrap()).unwrap();
+        assert!(report.deleted.is_empty());
+        assert_eq!(report.failed.len(), 1);
+        assert_eq!(report.failed[0].error.code, ErrorCode::LocalModified);
+        assert!(path.join("SKILL.md").is_file());
+        assert_eq!(stored(&store, "one").local_state, LocalState::Modified);
+        assert!(store.trash_entries().unwrap().is_empty());
+
+        let snapshot = run_delete(&repo, &store, &["one"], true);
+
+        let report: DeleteReport = serde_json::from_value(snapshot.result.unwrap()).unwrap();
+        assert_eq!(report.deleted.len(), 1);
+        assert!(report.failed.is_empty());
+        assert!(store.installation("one").unwrap().is_none());
+        let entries = store.trash_entries().unwrap();
+        assert_eq!(entries[0].installation.local_state, LocalState::Modified);
+    }
+
+    #[test]
+    fn batch_delete_continues_after_a_failing_item() {
+        let (_temp, repo, store) = setup();
+        add_existing(
+            &repo,
+            &store,
+            "one",
+            source("owner/repo"),
+            "demo",
+            "content",
+        );
+        add_existing(
+            &repo,
+            &store,
+            "two",
+            source("owner/other"),
+            "other",
+            "content",
+        );
+
+        let snapshot = run_delete(&repo, &store, &["one", "missing", "two"], false);
+
+        assert_eq!(snapshot.state, OperationState::Succeeded);
+        let report: DeleteReport = serde_json::from_value(snapshot.result.unwrap()).unwrap();
+        assert_eq!(report.deleted.len(), 2);
+        assert_eq!(report.failed.len(), 1);
+        assert_eq!(report.failed[0].id, "missing");
+        assert_eq!(report.failed[0].error.code, ErrorCode::NotFound);
+        assert!(store.installation("one").unwrap().is_none());
+        assert!(store.installation("two").unwrap().is_none());
+        assert_eq!(store.trash_entries().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn delete_rolls_the_directory_back_when_the_database_transaction_fails() {
+        let (_temp, repo, store) = setup();
+        add_existing(
+            &repo,
+            &store,
+            "one",
+            source("owner/repo"),
+            "demo",
+            "content",
+        );
+        let connection = rusqlite::Connection::open(repo.database_path()).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TRIGGER reject_trash BEFORE INSERT ON trash
+                 BEGIN SELECT RAISE(ABORT, 'forced trash failure'); END;",
+            )
+            .unwrap();
+        drop(connection);
+
+        let snapshot = run_delete(&repo, &store, &["one"], false);
+
+        assert_eq!(snapshot.state, OperationState::Succeeded);
+        let report: DeleteReport = serde_json::from_value(snapshot.result.unwrap()).unwrap();
+        assert!(report.deleted.is_empty());
+        assert_eq!(report.failed[0].error.code, ErrorCode::Database);
+        assert!(installation_path(&repo, "demo").join("SKILL.md").is_file());
+        assert_eq!(stored(&store, "one").root_relpath, "demo");
+        assert!(store.trash_entries().unwrap().is_empty());
+        assert_eq!(fs::read_dir(repo.trash_dir()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn delete_of_missing_files_only_removes_the_record() {
+        let (_temp, repo, store) = setup();
+        add_existing(
+            &repo,
+            &store,
+            "one",
+            source("owner/repo"),
+            "demo",
+            "content",
+        );
+        fs::remove_dir_all(installation_path(&repo, "demo")).unwrap();
+
+        let snapshot = run_delete(&repo, &store, &["one"], false);
+
+        let report: DeleteReport = serde_json::from_value(snapshot.result.unwrap()).unwrap();
+        assert_eq!(report.deleted.len(), 1);
+        assert!(!report.deleted[0].trashed);
+        assert!(store.installation("one").unwrap().is_none());
+        assert!(store.trash_entries().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_cancelled_delete_processes_nothing() {
+        let (_temp, repo, store) = setup();
+        add_existing(
+            &repo,
+            &store,
+            "one",
+            source("owner/repo"),
+            "demo",
+            "content",
+        );
+        let context = crate::core::operations::test_context(true);
+        let ids = vec!["one".to_string()];
+
+        let error = delete_installations(&repo, &store, &ids, true, &context).unwrap_err();
+
+        assert_eq!(error.code, ErrorCode::Cancelled);
+        assert!(store.installation("one").unwrap().is_some());
+        assert!(installation_path(&repo, "demo").join("SKILL.md").is_file());
+        assert!(store.trash_entries().unwrap().is_empty());
+    }
+
+    #[test]
+    fn restore_moves_files_back_and_recreates_the_record() {
+        let (_temp, repo, store) = setup();
+        let original = add_existing(
+            &repo,
+            &store,
+            "one",
+            source("owner/repo"),
+            "demo",
+            "content",
+        );
+        run_delete(&repo, &store, &["one"], false);
+        let trash_id = store.trash_entries().unwrap()[0].id.clone();
+
+        let snapshot = run_restore(&repo, &store, &[trash_id.as_str()]);
+
+        assert_eq!(snapshot.state, OperationState::Succeeded);
+        let report: RestoreReport = serde_json::from_value(snapshot.result.unwrap()).unwrap();
+        assert_eq!(report.restored.len(), 1);
+        assert!(report.failed.is_empty());
+        let restored = stored(&store, "one");
+        assert_eq!(restored.display_name, "demo");
+        assert_eq!(restored.root_relpath, "demo");
+        assert_eq!(restored.baseline_hash, original.baseline_hash);
+        assert_eq!(restored.source, original.source);
+        assert!(installation_path(&repo, "demo").join("SKILL.md").is_file());
+        assert!(store.trash_entries().unwrap().is_empty());
+        assert_eq!(fs::read_dir(repo.trash_dir()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn restore_conflicts_when_the_target_path_is_taken() {
+        let (_temp, repo, store) = setup();
+        add_existing(
+            &repo,
+            &store,
+            "one",
+            source("owner/repo"),
+            "demo",
+            "content",
+        );
+        run_delete(&repo, &store, &["one"], false);
+        let trash_id = store.trash_entries().unwrap()[0].id.clone();
+        let path = installation_path(&repo, "demo");
+        write_skill(&path, "demo", "untracked");
+
+        let snapshot = run_restore(&repo, &store, &[trash_id.as_str()]);
+
+        let report: RestoreReport = serde_json::from_value(snapshot.result.unwrap()).unwrap();
+        assert!(report.restored.is_empty());
+        assert_eq!(report.failed[0].error.code, ErrorCode::Conflict);
+        assert!(store.installation("one").unwrap().is_none());
+        assert_eq!(store.trash_entries().unwrap().len(), 1);
+        assert!(
+            fs::read_to_string(path.join("SKILL.md"))
+                .unwrap()
+                .contains("untracked")
+        );
+    }
+
+    #[test]
+    fn restore_keeps_files_in_trash_when_the_database_insert_fails() {
+        let (_temp, repo, store) = setup();
+        add_existing(
+            &repo,
+            &store,
+            "one",
+            source("owner/repo"),
+            "demo",
+            "content",
+        );
+        run_delete(&repo, &store, &["one"], false);
+        let trash_id = store.trash_entries().unwrap()[0].id.clone();
+        let connection = rusqlite::Connection::open(repo.database_path()).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TRIGGER reject_restore BEFORE INSERT ON installations
+                 BEGIN SELECT RAISE(ABORT, 'forced insert failure'); END;",
+            )
+            .unwrap();
+        drop(connection);
+
+        let snapshot = run_restore(&repo, &store, &[trash_id.as_str()]);
+
+        let report: RestoreReport = serde_json::from_value(snapshot.result.unwrap()).unwrap();
+        assert!(report.restored.is_empty());
+        assert_eq!(report.failed[0].error.code, ErrorCode::Database);
+        assert!(store.installation("one").unwrap().is_none());
+        assert_eq!(store.trash_entries().unwrap().len(), 1);
+        assert!(!installation_path(&repo, "demo").exists());
+        assert!(
+            repo.trash_path(&store.trash_entries().unwrap()[0].trash_relpath)
+                .unwrap()
+                .join("SKILL.md")
+                .is_file()
+        );
+    }
+
+    #[test]
+    fn purge_permanently_removes_trash_files_and_records() {
+        let (_temp, repo, store) = setup();
+        add_existing(
+            &repo,
+            &store,
+            "one",
+            source("owner/repo"),
+            "demo",
+            "content",
+        );
+        run_delete(&repo, &store, &["one"], false);
+        let entry = store.trash_entries().unwrap().remove(0);
+        let trash_path = repo.trash_path(&entry.trash_relpath).unwrap();
+
+        let snapshot = run_purge(&repo, &store, &[entry.id.as_str()]);
+
+        assert_eq!(snapshot.state, OperationState::Succeeded);
+        let report: PurgeReport = serde_json::from_value(snapshot.result.unwrap()).unwrap();
+        assert_eq!(report.purged.len(), 1);
+        assert_eq!(report.purged[0], entry.id);
+        assert!(report.failed.is_empty());
+        assert!(store.trash_entries().unwrap().is_empty());
+        assert!(!trash_path.exists());
+        assert!(!installation_path(&repo, "demo").exists());
     }
 }
