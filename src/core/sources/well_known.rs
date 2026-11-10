@@ -8,8 +8,8 @@ use reqwest::blocking::{Client, Response};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use super::DownloadedSkill;
 use super::skills_sh::marketplace_source;
+use super::{DownloadObserver, DownloadProgress, DownloadedSkill};
 use crate::core::error::{AppError, ErrorCode, Result};
 use crate::core::http;
 use crate::core::metadata::discover_single;
@@ -57,6 +57,7 @@ pub fn download(
     source: &SkillSource,
     proxy: &ProxySettings,
     staging_dir: &Path,
+    observer: &dyn DownloadObserver,
 ) -> Result<DownloadedSkill> {
     let url = source
         .url
@@ -64,7 +65,7 @@ pub fn download(
         .ok_or_else(|| AppError::invalid_input("well-known source URL is required"))?;
     let site = parse_site_ref(url)?;
     let client = http::build_client(proxy, REQUEST_TIMEOUT)?;
-    let index = fetch_index(&client, &site.source_url)?;
+    let index = fetch_index(&client, &site.source_url, observer)?;
     let entry = index
         .payload
         .get("skills")
@@ -87,9 +88,9 @@ pub fn download(
     let skill_dir = temp_dir.path().join("skill");
     create_dir_all(&skill_dir)?;
     let digest = if index.payload.get("$schema").is_some() {
-        download_v2_entry(&client, &index, entry, &skill_dir)?
+        download_v2_entry(&client, &index, entry, &skill_dir, observer)?
     } else {
-        download_v1_entry(&client, &index, entry, &site.skill_id, &skill_dir)?
+        download_v1_entry(&client, &index, entry, &site.skill_id, &skill_dir, observer)?
     };
     let candidate = discover_single(&skill_dir)?;
     DownloadedSkill::from_candidate(temp_dir, &skill_dir, candidate, None, digest)
@@ -127,8 +128,13 @@ fn parse_site_ref(input: &str) -> Result<SiteRef> {
     })
 }
 
-fn fetch_index(client: &Client, source_url: &str) -> Result<DiscoveryIndex> {
+fn fetch_index(
+    client: &Client,
+    source_url: &str,
+    observer: &dyn DownloadObserver,
+) -> Result<DiscoveryIndex> {
     for path in [".well-known/agent-skills", ".well-known/skills"] {
+        observer.check_cancelled()?;
         let base = Url::parse(source_url)
             .map_err(|_| AppError::invalid_input("invalid well-known source URL"))?;
         let url = base
@@ -140,8 +146,16 @@ fn fetch_index(client: &Client, source_url: &str) -> Result<DiscoveryIndex> {
         let Ok(response) = response.error_for_status() else {
             continue;
         };
-        let Ok(bytes) = read_response(response, &url, MAX_DOWNLOAD_BYTES) else {
-            continue;
+        let bytes = match read_response(
+            response,
+            &url,
+            MAX_DOWNLOAD_BYTES,
+            observer,
+            ReadProgress::None,
+        ) {
+            Ok(bytes) => bytes,
+            Err(error) if error.code == ErrorCode::Cancelled => return Err(error),
+            Err(_) => continue,
         };
         let Ok(payload) = serde_json::from_slice::<Value>(&bytes) else {
             continue;
@@ -162,6 +176,7 @@ fn download_v1_entry(
     entry: &Value,
     skill_id: &str,
     skill_dir: &Path,
+    observer: &dyn DownloadObserver,
 ) -> Result<Option<String>> {
     let files = entry
         .get("files")
@@ -188,14 +203,24 @@ fn download_v1_entry(
         .and_then(|url| url.join(&format!("{skill_id}/")))
         .map_err(|_| invalid_response("skills index contains an invalid skill name"))?;
     let mut remaining = MAX_DOWNLOAD_BYTES;
-    for file in files {
+    let total = files.len() as u64;
+    let mut received = 0u64;
+    observer.report(DownloadProgress {
+        current: 0,
+        total: Some(total),
+        bytes: None,
+        bytes_total: None,
+    })?;
+    for (position, file) in files.iter().enumerate() {
+        observer.check_cancelled()?;
         let file = file.as_str().expect("file paths were preflighted");
         let destination = skill_dir.join(safe_relative_path(file)?);
         let url = base
             .join(file)
             .map_err(|_| invalid_response("skills index contains an invalid file URL"))?;
-        let bytes = get_bytes_limited(client, &url, remaining)?;
+        let bytes = get_bytes_limited(client, &url, remaining, observer, ReadProgress::None)?;
         remaining -= bytes.len() as u64;
+        received += bytes.len() as u64;
         if let Some(parent) = destination.parent() {
             create_dir_all(parent)?;
         }
@@ -204,6 +229,12 @@ fn download_v1_entry(
             .create_new(true)
             .open(destination)?;
         output.write_all(&bytes)?;
+        observer.report(DownloadProgress {
+            current: position as u64 + 1,
+            total: Some(total),
+            bytes: Some(received),
+            bytes_total: None,
+        })?;
     }
     if !skill_dir.join("SKILL.md").is_file() {
         return Err(invalid_skill("skills index entry is missing SKILL.md"));
@@ -216,6 +247,7 @@ fn download_v2_entry(
     index: &DiscoveryIndex,
     entry: &Value,
     skill_dir: &Path,
+    observer: &dyn DownloadObserver,
 ) -> Result<Option<String>> {
     let kind = entry
         .get("type")
@@ -229,7 +261,13 @@ fn download_v2_entry(
         .url
         .join(artifact)
         .map_err(|_| invalid_response("skills index entry has an invalid url"))?;
-    let bytes = get_bytes_limited(client, &url, MAX_DOWNLOAD_BYTES)?;
+    let bytes = get_bytes_limited(
+        client,
+        &url,
+        MAX_DOWNLOAD_BYTES,
+        observer,
+        ReadProgress::Bytes,
+    )?;
     let digest = entry.get("digest").and_then(Value::as_str);
     if let Some(digest) = digest {
         verify_digest(&bytes, digest)?;
@@ -237,7 +275,7 @@ fn download_v2_entry(
 
     match kind {
         "skill-md" => std::fs::write(skill_dir.join("SKILL.md"), bytes)?,
-        "archive" => extract_zip(&bytes, skill_dir)?,
+        "archive" => extract_zip(&bytes, skill_dir, observer)?,
         other => {
             return Err(invalid_response(format!(
                 "unsupported skills index entry type: {other}"
@@ -250,33 +288,76 @@ fn download_v2_entry(
     Ok(digest.map(str::to_owned))
 }
 
-fn get_bytes_limited(client: &Client, url: &Url, limit: u64) -> Result<Vec<u8>> {
+/// Whether a response body reports transferred bytes while it streams.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReadProgress {
+    None,
+    Bytes,
+}
+
+fn get_bytes_limited(
+    client: &Client,
+    url: &Url,
+    limit: u64,
+    observer: &dyn DownloadObserver,
+    progress: ReadProgress,
+) -> Result<Vec<u8>> {
+    observer.check_cancelled()?;
     let response = client
         .get(url.clone())
         .send()
         .map_err(|error| network_error(url, error))?
         .error_for_status()
         .map_err(|error| network_error(url, error))?;
-    read_response(response, url, limit)
+    read_response(response, url, limit, observer, progress)
 }
 
-fn read_response(response: Response, url: &Url, limit: u64) -> Result<Vec<u8>> {
-    if response.content_length().is_some_and(|size| size > limit) {
+fn read_response(
+    response: Response,
+    url: &Url,
+    limit: u64,
+    observer: &dyn DownloadObserver,
+    progress: ReadProgress,
+) -> Result<Vec<u8>> {
+    let total = response.content_length();
+    if total.is_some_and(|size| size > limit) {
         return Err(invalid_skill(format!(
             "download exceeds the {limit} byte limit"
         )));
     }
+    if progress == ReadProgress::Bytes {
+        observer.report(DownloadProgress {
+            current: 0,
+            total,
+            bytes: Some(0),
+            bytes_total: total,
+        })?;
+    }
     let mut bytes = Vec::new();
-    response
-        .take(limit + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|error| {
+    let mut reader = response.take(limit + 1);
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        observer.check_cancelled()?;
+        let read = reader.read(&mut buffer).map_err(|error| {
             AppError::new(
                 ErrorCode::Network,
                 format!("failed to read download from {url}: {error}"),
             )
             .retryable(true)
         })?;
+        if read == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&buffer[..read]);
+        if progress == ReadProgress::Bytes {
+            observer.report(DownloadProgress {
+                current: bytes.len() as u64,
+                total,
+                bytes: Some(bytes.len() as u64),
+                bytes_total: total,
+            })?;
+        }
+    }
     if bytes.len() as u64 > limit {
         return Err(invalid_skill(format!(
             "download exceeds the {limit} byte limit"
@@ -305,8 +386,14 @@ fn verify_digest(bytes: &[u8], expected: &str) -> Result<()> {
     Ok(())
 }
 
-fn extract_zip(bytes: &[u8], destination: &Path) -> Result<()> {
-    extract_zip_with_limits(bytes, destination, MAX_EXTRACTED_BYTES, MAX_ARCHIVE_ENTRIES)
+fn extract_zip(bytes: &[u8], destination: &Path, observer: &dyn DownloadObserver) -> Result<()> {
+    extract_zip_with_limits(
+        bytes,
+        destination,
+        MAX_EXTRACTED_BYTES,
+        MAX_ARCHIVE_ENTRIES,
+        observer,
+    )
 }
 
 fn extract_zip_with_limits(
@@ -314,6 +401,7 @@ fn extract_zip_with_limits(
     destination: &Path,
     max_bytes: u64,
     max_entries: usize,
+    observer: &dyn DownloadObserver,
 ) -> Result<()> {
     reject_duplicate_archive_entries(bytes)?;
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).map_err(zip_error)?;
@@ -325,6 +413,7 @@ fn extract_zip_with_limits(
     let mut paths = PathBudget::default();
     let mut seen = HashSet::new();
     for index in 0..archive.len() {
+        observer.check_cancelled()?;
         let entry = archive.by_index(index).map_err(zip_error)?;
         let name = entry.name().trim_end_matches('/');
         paths.add(name)?;
@@ -349,6 +438,7 @@ fn extract_zip_with_limits(
 
     let mut remaining = max_bytes;
     for index in 0..archive.len() {
+        observer.check_cancelled()?;
         let mut entry = archive.by_index(index).map_err(zip_error)?;
         let relative = safe_relative_path(entry.name().trim_end_matches('/'))?;
         let target = destination.join(relative);
@@ -363,7 +453,7 @@ fn extract_zip_with_limits(
             .write(true)
             .create_new(true)
             .open(target)?;
-        let written = std::io::copy(&mut (&mut entry).take(remaining), &mut file)?;
+        let written = copy_with_cancel(&mut entry, &mut file, remaining, observer)?;
         remaining -= written;
         let mut extra = [0u8; 1];
         if entry.read(&mut extra)? != 0 {
@@ -371,6 +461,31 @@ fn extract_zip_with_limits(
         }
     }
     Ok(())
+}
+
+/// Copies one archive entry block by block, so cancelling does not wait for a
+/// whole file to be written.
+fn copy_with_cancel(
+    reader: &mut impl Read,
+    writer: &mut impl Write,
+    limit: u64,
+    observer: &dyn DownloadObserver,
+) -> Result<u64> {
+    let mut buffer = [0u8; 64 * 1024];
+    let mut remaining = limit;
+    let mut written = 0u64;
+    while remaining > 0 {
+        observer.check_cancelled()?;
+        let want = buffer.len().min(remaining as usize);
+        let read = reader.read(&mut buffer[..want])?;
+        if read == 0 {
+            break;
+        }
+        writer.write_all(&buffer[..read])?;
+        remaining -= read as u64;
+        written += read as u64;
+    }
+    Ok(written)
 }
 
 fn reject_duplicate_archive_entries(bytes: &[u8]) -> Result<()> {
@@ -544,6 +659,7 @@ fn zip_error(error: zip::result::ZipError) -> AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::sources::SilentObserver;
     use zip::write::SimpleFileOptions;
 
     fn archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
@@ -582,7 +698,7 @@ mod tests {
     fn extracts_valid_bundle_at_exact_byte_limit() {
         let bytes = archive(&[("SKILL.md", b"skill"), ("references/guide.md", b"guide")]);
         let temp = tempfile::tempdir().unwrap();
-        extract_zip_with_limits(&bytes, temp.path(), 10, 2).unwrap();
+        extract_zip_with_limits(&bytes, temp.path(), 10, 2, &SilentObserver).unwrap();
         assert_eq!(
             std::fs::read(temp.path().join("references/guide.md")).unwrap(),
             b"guide"
@@ -601,7 +717,10 @@ mod tests {
         ] {
             let bytes = archive(&[("SKILL.md", b"skill"), (name, b"bad")]);
             let temp = tempfile::tempdir().unwrap();
-            assert!(extract_zip(&bytes, temp.path()).is_err(), "{name}");
+            assert!(
+                extract_zip(&bytes, temp.path(), &SilentObserver).is_err(),
+                "{name}"
+            );
             assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 0);
         }
 
@@ -611,7 +730,7 @@ mod tests {
             .unwrap();
         let bytes = writer.finish().unwrap().into_inner();
         let temp = tempfile::tempdir().unwrap();
-        assert!(extract_zip(&bytes, temp.path()).is_err());
+        assert!(extract_zip(&bytes, temp.path(), &SilentObserver).is_err());
         assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 0);
 
         let mut bytes = archive(&[("SKILL.md", b"one"), ("OTHER.md", b"two")]);
@@ -621,7 +740,7 @@ mod tests {
             }
         }
         let temp = tempfile::tempdir().unwrap();
-        assert!(extract_zip(&bytes, temp.path()).is_err());
+        assert!(extract_zip(&bytes, temp.path(), &SilentObserver).is_err());
         assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 0);
     }
 
@@ -633,7 +752,16 @@ mod tests {
         ]);
         for (max_bytes, max_entries) in [(8191, 2), (8192, 1)] {
             let temp = tempfile::tempdir().unwrap();
-            assert!(extract_zip_with_limits(&bytes, temp.path(), max_bytes, max_entries).is_err());
+            assert!(
+                extract_zip_with_limits(
+                    &bytes,
+                    temp.path(),
+                    max_bytes,
+                    max_entries,
+                    &SilentObserver
+                )
+                .is_err()
+            );
             assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 0);
         }
 
@@ -642,7 +770,7 @@ mod tests {
         for name in [long, deep] {
             let bytes = archive(&[("SKILL.md", b"skill"), (&name, b"bad")]);
             let temp = tempfile::tempdir().unwrap();
-            assert!(extract_zip(&bytes, temp.path()).is_err());
+            assert!(extract_zip(&bytes, temp.path(), &SilentObserver).is_err());
             assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 0);
         }
     }
@@ -652,7 +780,7 @@ mod tests {
         let bytes = archive(&[("SKILL.md", b"second")]);
         let temp = tempfile::tempdir().unwrap();
         std::fs::write(temp.path().join("SKILL.md"), b"first").unwrap();
-        assert!(extract_zip(&bytes, temp.path()).is_err());
+        assert!(extract_zip(&bytes, temp.path(), &SilentObserver).is_err());
         assert_eq!(
             std::fs::read(temp.path().join("SKILL.md")).unwrap(),
             b"first"
@@ -663,7 +791,7 @@ mod tests {
             vec![("reference/guide.md", b"a".as_slice()), ("reference", b"b")],
         ] {
             let temp = tempfile::tempdir().unwrap();
-            assert!(extract_zip(&archive(&entries), temp.path()).is_err());
+            assert!(extract_zip(&archive(&entries), temp.path(), &SilentObserver).is_err());
         }
     }
 
@@ -705,7 +833,7 @@ mod tests {
         let central = bytes.windows(4).position(|w| w == b"PK\x01\x02").unwrap();
         bytes[central + 24..central + 28].copy_from_slice(&10u32.to_le_bytes());
         let temp = tempfile::tempdir().unwrap();
-        assert!(extract_zip_with_limits(&bytes, temp.path(), 100, 10).is_err());
+        assert!(extract_zip_with_limits(&bytes, temp.path(), 100, 10, &SilentObserver).is_err());
         let written = std::fs::metadata(temp.path().join("SKILL.md"))
             .map(|metadata| metadata.len())
             .unwrap_or(0);

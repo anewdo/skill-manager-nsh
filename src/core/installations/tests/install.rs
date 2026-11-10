@@ -76,6 +76,128 @@ fn same_lineage_conflicts_before_download_without_overwriting_files() {
 }
 
 #[test]
+fn adopts_an_unmanaged_copy_with_identical_content() {
+    let (_temp, repo, store) = setup();
+    let orphan = repo.skills_root(Category::Marketplace).join("demo");
+    write_skill(&orphan, "demo", "same");
+
+    let snapshot = run_install(
+        &repo,
+        &store,
+        source("owner/repo"),
+        downloaded(&repo, "demo", "same"),
+    );
+
+    assert_eq!(snapshot.state, OperationState::Succeeded);
+    let value = snapshot.result.unwrap();
+    assert!(value.get("unmanaged_copy").is_none());
+    let installation: Installation = serde_json::from_value(value).unwrap();
+    assert_eq!(installation.root_relpath, "demo");
+    assert_eq!(installation.local_state, LocalState::Clean);
+    assert_eq!(
+        installation.baseline_hash,
+        Some(content_hash(&orphan).unwrap())
+    );
+    assert_eq!(
+        store
+            .list_installations(Category::Marketplace)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        store.installation(&installation.id).unwrap(),
+        Some(installation)
+    );
+}
+
+#[test]
+fn installs_with_a_suffix_when_an_unmanaged_copy_differs() {
+    let (_temp, repo, store) = setup();
+    let orphan = repo.skills_root(Category::Marketplace).join("demo");
+    write_skill(&orphan, "demo", "local copy");
+
+    let snapshot = run_install(
+        &repo,
+        &store,
+        source("owner/repo"),
+        downloaded(&repo, "demo", "from market"),
+    );
+
+    assert_eq!(snapshot.state, OperationState::Succeeded);
+    let value = snapshot.result.unwrap();
+    assert_eq!(
+        value.get("unmanaged_copy").and_then(|copy| copy.as_str()),
+        Some("demo")
+    );
+    let installation: Installation = serde_json::from_value(value).unwrap();
+    assert_eq!(installation.root_relpath, "demo-2");
+    let orphan_content = fs::read_to_string(orphan.join("SKILL.md")).unwrap();
+    assert!(orphan_content.contains("local copy"));
+    let installed_content =
+        fs::read_to_string(installation_path(&repo, "demo-2").join("SKILL.md")).unwrap();
+    assert!(installed_content.contains("from market"));
+}
+
+#[test]
+fn reinstalls_a_lineage_whose_local_files_were_deleted() {
+    let (_temp, repo, store) = setup();
+    let existing = add_existing(
+        &repo,
+        &store,
+        "existing",
+        source("owner/repo"),
+        "demo",
+        "original",
+    );
+    fs::remove_dir_all(installation_path(&repo, "demo")).unwrap();
+
+    let snapshot = run_install(
+        &repo,
+        &store,
+        source("owner/repo"),
+        downloaded(&repo, "demo", "restored"),
+    );
+
+    assert_eq!(snapshot.state, OperationState::Succeeded);
+    let restored: Installation = serde_json::from_value(snapshot.result.unwrap()).unwrap();
+    assert_ne!(restored.id, existing.id);
+    assert_eq!(restored.root_relpath, "demo");
+    assert_eq!(restored.local_state, LocalState::Clean);
+    assert_eq!(store.installation("existing").unwrap(), None);
+    assert_eq!(
+        store.installation(&restored.id).unwrap(),
+        Some(restored.clone())
+    );
+    let content = fs::read_to_string(installation_path(&repo, "demo").join("SKILL.md")).unwrap();
+    assert!(content.contains("restored"));
+}
+
+#[test]
+fn marketplace_listing_reports_deleted_installations_as_missing() {
+    let (_temp, repo, store) = setup();
+    let existing = add_existing(
+        &repo,
+        &store,
+        "existing",
+        source("owner/repo"),
+        "demo",
+        "original",
+    );
+    fs::remove_dir_all(installation_path(&repo, "demo")).unwrap();
+
+    let installations = list_marketplace_installations(&repo, &store).unwrap();
+
+    assert_eq!(installations.len(), 1);
+    assert_eq!(installations[0].local_state, LocalState::Missing);
+    assert_eq!(installations[0].current_hash, existing.current_hash);
+    assert_eq!(
+        store.installation("existing").unwrap().unwrap().local_state,
+        LocalState::Missing
+    );
+}
+
+#[test]
 fn identical_content_from_another_source_reuses_the_existing_record() {
     let (_temp, repo, store) = setup();
     let existing = add_existing(
@@ -163,17 +285,24 @@ fn an_untracked_existing_target_is_never_overwritten() {
         downloaded(&repo, "demo", "download"),
     );
 
-    assert_eq!(snapshot.state, OperationState::Failed);
-    assert_eq!(snapshot.error.unwrap().code, ErrorCode::Conflict);
+    assert_eq!(snapshot.state, OperationState::Succeeded);
+    let value = snapshot.result.unwrap();
+    assert_eq!(
+        value.get("unmanaged_copy").and_then(|copy| copy.as_str()),
+        Some("demo")
+    );
+    let installation: Installation = serde_json::from_value(value).unwrap();
+    assert_eq!(installation.root_relpath, "demo-2");
     assert_eq!(
         fs::read_to_string(target.join("sentinel.txt")).unwrap(),
         "keep"
     );
-    assert!(
+    assert_eq!(
         store
             .list_installations(Category::Marketplace)
             .unwrap()
-            .is_empty()
+            .len(),
+        1
     );
 }
 

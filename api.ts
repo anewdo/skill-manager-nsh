@@ -3,6 +3,7 @@ import type {
   CacheClearReport,
   Category,
   ConnectivityCheck,
+  DisplayWorkArea,
   Installation,
   InstallationDetail,
   LeaderboardKind,
@@ -19,10 +20,11 @@ import type {
 interface NativeModules {
   AppNative: {
     schemaVersion(): number;
+    primaryDisplayWorkArea(): unknown;
     marketLeaderboard(kind: string, forceRefresh: boolean): Promise<unknown>;
     marketSearch(query: string, limit: number, forceRefresh: boolean): Promise<unknown>;
     marketPreview(source: unknown): Promise<unknown>;
-    installMarketplace(source: unknown): unknown;
+    installMarketplace(source: unknown, label: unknown): unknown;
     activeOperation(): unknown;
     operationSnapshot(id: string): unknown;
     cancelOperation(id: string): unknown;
@@ -47,6 +49,10 @@ export function schemaVersion(): number {
   return AppNative.schemaVersion();
 }
 
+export function primaryDisplayWorkArea(): DisplayWorkArea | null {
+  return AppNative.primaryDisplayWorkArea() as DisplayWorkArea | null;
+}
+
 export async function marketLeaderboard(
   kind: LeaderboardKind,
   forceRefresh = false,
@@ -66,8 +72,11 @@ export async function marketPreview(source: SkillSource): Promise<SkillPreview> 
   return await AppNative.marketPreview(source) as SkillPreview;
 }
 
-export function installMarketplace(source: SkillSource): string {
-  return AppNative.installMarketplace(source) as string;
+export function installMarketplace(
+  source: SkillSource,
+  label: { name: string; source: string },
+): string {
+  return AppNative.installMarketplace(source, label) as string;
 }
 
 export function activeOperation(): OperationSnapshot | null {

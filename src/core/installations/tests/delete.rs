@@ -1,13 +1,6 @@
 use super::*;
 use crate::core::model::OperationState;
 
-fn staging_entries(repo: &CentralRepo) -> Vec<PathBuf> {
-    fs::read_dir(repo.staging_dir())
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .collect()
-}
-
 #[test]
 fn delete_removes_the_local_copy_and_the_record_immediately() {
     let (_temp, repo, store) = setup();

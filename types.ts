@@ -42,8 +42,15 @@ export interface OperationProgress {
   phase: string;
   current?: number;
   total?: number;
+  bytes?: number;
+  bytes_total?: number;
   detail?: string;
   cancellable: boolean;
+}
+
+export interface OperationLabel {
+  name: string;
+  source: string;
 }
 
 export interface OperationSnapshot {
@@ -51,6 +58,7 @@ export interface OperationSnapshot {
   kind: OperationKind;
   state: OperationState;
   cancel_requested: boolean;
+  label?: OperationLabel;
   progress: OperationProgress | null;
   result: unknown;
   error: AppError | null;
@@ -96,6 +104,11 @@ export interface Installation {
   created_at: number;
   updated_at: number;
   last_error: string | null;
+}
+
+/** A finished marketplace install, plus a same-named local copy the app left untouched. */
+export interface InstallResult extends Installation {
+  unmanaged_copy?: string | null;
 }
 
 export interface SkillMetadata {
@@ -173,6 +186,14 @@ export interface SettingsPatch {
 
 export interface CacheClearReport {
   cleared_entries: number;
+}
+
+/** The primary display's work area in points, `y` growing down. */
+export interface DisplayWorkArea {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 export type ConnectivityTarget = "github" | "skills_sh";

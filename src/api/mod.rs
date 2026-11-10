@@ -9,8 +9,8 @@ use crate::core::http;
 use crate::core::installations;
 use crate::core::market;
 use crate::core::model::{
-    Category, Installation, OperationEvent, OperationKind, Settings, SettingsPatch, SkillSource,
-    UpdateConflictPolicy,
+    Category, Installation, OperationEvent, OperationKind, OperationLabel, Settings, SettingsPatch,
+    SkillSource, UpdateConflictPolicy,
 };
 use crate::core::operations::OperationQueue;
 use crate::core::settings;
@@ -36,6 +36,11 @@ impl AppNative {
     /// Returns the current SQLite schema version.
     pub fn schema_version() -> u32 {
         crate::core::migrations::LATEST_VERSION
+    }
+
+    /// Returns the primary display's work area in points, or null when unknown.
+    pub fn primary_display_work_area() -> std::result::Result<JsonValue, JsError> {
+        to_json(crate::core::display::primary_work_area())
     }
 
     /// Loads a skills.sh leaderboard from the network.
@@ -86,15 +91,23 @@ impl AppNative {
     }
 
     /// Queues a marketplace installation and returns its operation ID.
-    pub fn install_marketplace(source: JsonValue) -> std::result::Result<JsonValue, JsError> {
+    pub fn install_marketplace(
+        source: JsonValue,
+        label: JsonValue,
+    ) -> std::result::Result<JsonValue, JsError> {
         let source: SkillSource = serde_json::from_value(source).map_err(|error| {
             js_error(AppError::invalid_input(format!(
                 "invalid skill source: {error}"
             )))
         })?;
+        let label: OperationLabel = serde_json::from_value(label).map_err(|error| {
+            js_error(AppError::invalid_input(format!(
+                "invalid install label: {error}"
+            )))
+        })?;
         let state = app_state().map_err(js_error)?;
         let id = operations()
-            .enqueue(OperationKind::Install, move |context| {
+            .enqueue_with_label(OperationKind::Install, Some(label), move |context| {
                 let proxy = state.store.settings()?.proxy;
                 installations::install_marketplace(
                     &state.repo,
@@ -188,8 +201,12 @@ impl AppNative {
     pub async fn list_installations(category: String) -> std::result::Result<JsonValue, JsError> {
         let category = parse_category(&category).map_err(js_error)?;
         run_json(move || {
-            let installations: Vec<Installation> =
-                app_state()?.store.list_installations(category)?;
+            let state = app_state()?;
+            let installations: Vec<Installation> = if category == Category::Marketplace {
+                installations::list_marketplace_installations(&state.repo, &state.store)?
+            } else {
+                state.store.list_installations(category)?
+            };
             Ok(installations)
         })
         .await

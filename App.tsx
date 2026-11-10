@@ -1,17 +1,64 @@
-import { mount, signal } from "nsh";
+import { Overlay, mount, signal } from "nsh";
 import { Text, View } from "nsh";
 import { Tab, Tabs } from "nsh/base";
-import { Icon } from "./components/icon";
+import { Window } from "nsh/desktop";
+import { primaryDisplayWorkArea } from "./api";
+import { Icon, type IconColor, type IconName } from "./components/icon";
 import { Banner } from "./components/ui";
 import { describeError } from "./errors";
 import { translate, type MessageKey } from "./i18n";
 import { MarketplacePage } from "./pages/marketplace/Marketplace";
 import { MySkillsPage } from "./pages/myskills/MySkills";
 import { SettingsPage } from "./pages/settings/Settings";
-import { createAppStore } from "./store";
+import { createAppStore, type AppStore, type ToastTone } from "./store";
 import type { AppError } from "./types";
 
 type Page = "marketplace" | "library" | "settings";
+
+const toastTone: Record<
+  ToastTone,
+  { border: string; icon: IconName; iconColor: IconColor }
+> = {
+  success: { border: "border-primary/40", icon: "check", iconColor: "primary" },
+  error: { border: "border-destructive/40", icon: "warning", iconColor: "destructive" },
+  info: { border: "border-border", icon: "info", iconColor: "muted-foreground" },
+};
+
+function ToastHost(props: { store: AppStore }) {
+  return (
+    <Overlay
+      style={{
+        pointerEvents: "box-none",
+        left: 0,
+        right: 0,
+        top: 0,
+        bottom: 0,
+        paddingHorizontal: 16,
+        paddingTop: 16,
+        alignItems: "flex-end",
+      }}
+    >
+      <View class="w-[360px] gap-2" style={{ pointerEvents: "box-none" }}>
+        <Each of={props.store.toasts()} key={(toast) => toast.id}>
+          {(toast) => (
+            <View
+              class={`flex-row items-start gap-2 rounded-(--radius) border bg-card px-3 py-2 shadow ${toastTone[toast().tone].border}`}
+              accessibilityLabel={toast().message}
+              onPress={() => props.store.dismissToast(toast().id)}
+            >
+              <Icon
+                name={toastTone[toast().tone].icon}
+                size={16}
+                color={toastTone[toast().tone].iconColor}
+              />
+              <Text class="flex-1 text-sm text-card-foreground">{toast().message}</Text>
+            </View>
+          )}
+        </Each>
+      </View>
+    </Overlay>
+  );
+}
 
 const navItemClass =
   "w-full flex-row items-center rounded-(--radius) px-3 py-2 active:bg-accent selected:bg-secondary";
@@ -43,9 +90,30 @@ function NavTab(props: {
   );
 }
 
+const initialWindowWidth = 1200;
+const initialWindowHeight = 720;
+
+/** Sizes the window and centers it in the primary display's work area. */
+function placeWindow(): void {
+  const area = primaryDisplayWorkArea();
+  if (!area) {
+    return;
+  }
+  const width = Math.min(initialWindowWidth, area.width - 48);
+  const height = Math.min(initialWindowHeight, area.height - 48);
+  Window.setFrame({
+    size: { width, height },
+    origin: {
+      x: Math.round(area.x + (area.width - width) / 2),
+      y: Math.round(area.y + (area.height - height) / 2),
+    },
+  });
+}
+
 function App() {
   const store = createAppStore();
   store.start();
+  placeWindow();
   const page = signal<Page>("marketplace");
 
   const text = (key: MessageKey): string =>
@@ -101,6 +169,7 @@ function App() {
         <If when={page() === "library"}>{() => <MySkillsPage store={store} />}</If>
         <If when={page() === "settings"}>{() => <SettingsPage store={store} />}</If>
       </View>
+      <ToastHost store={store} />
     </View>
   );
 }

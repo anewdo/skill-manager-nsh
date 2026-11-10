@@ -26,11 +26,10 @@ test("opens the settings page from the sidebar", async () => {
   expect(app.count("id:settings-theme-dark")).toBe(1);
   expect(app.count("id:settings-proxy-custom")).toBe(1);
   expect(app.count("id:settings-test-connectivity")).toBe(1);
+
+  await app.press("id:settings-proxy-system");
   expect(app.shows("id:settings-proxy-url")).toBe(false);
 
   await app.press("id:settings-proxy-custom");
   await app.waitFor("id:settings-proxy-url");
-
-  await app.press("id:settings-proxy-system");
-  expect(app.shows("id:settings-proxy-url")).toBe(false);
 });

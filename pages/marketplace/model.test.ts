@@ -1,7 +1,6 @@
 import { expect, test } from "nsh/test";
 import type { Installation, MarketplaceSkill, SourceType } from "../../types";
 import {
-  GRID_COLUMNS,
   PAGE_SIZE,
   chunk,
   clampPage,
@@ -95,22 +94,25 @@ test("reports the range a page shows", () => {
 test("chunks entries into rows of the grid", () => {
   const rows = chunk(Array.from({ length: 7 }, (_, index) => index));
 
-  expect(GRID_COLUMNS).toBe(3);
   expect(rows).toHaveLength(3);
   expect(rows[0]).toEqual([0, 1, 2]);
   expect(rows[2]).toEqual([6]);
   expect(chunk([], 3)).toEqual([]);
 });
 
-test("collects the lineage keys of the installations that have a source", () => {
+test("collects the lineage keys of the installations whose files still exist", () => {
+  const missing = installation("gone", "github:owner/repo/gone");
+  missing.local_state = "missing";
   const keys = installedLineages([
     installation("one", "github:owner/repo/one"),
     installation("two", "well-known:example.com/two"),
     installation("local", null),
+    missing,
   ]);
 
   expect(keys.has("github:owner/repo/one")).toBe(true);
   expect(keys.has("well-known:example.com/two")).toBe(true);
+  expect(keys.has("github:owner/repo/gone")).toBe(false);
   expect(keys.size).toBe(2);
 });
 

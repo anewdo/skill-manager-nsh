@@ -12,8 +12,8 @@ use uuid::Uuid;
 
 use super::error::{AppError, ErrorCode, Result};
 use super::model::{
-    OperationEvent, OperationEventKind, OperationKind, OperationProgress, OperationSnapshot,
-    OperationState,
+    OperationEvent, OperationEventKind, OperationKind, OperationLabel, OperationProgress,
+    OperationSnapshot, OperationState,
 };
 
 const EVENT_CAPACITY: usize = 256;
@@ -80,7 +80,21 @@ impl OperationQueue {
     where
         T: Serialize + Send + 'static,
     {
-        self.enqueue_value(kind, move |context| {
+        self.enqueue_with_label(kind, None, job)
+    }
+
+    /// Enqueues an operation whose progress the UI shows by name before its
+    /// result exists, such as a marketplace install.
+    pub fn enqueue_with_label<T>(
+        &self,
+        kind: OperationKind,
+        label: Option<OperationLabel>,
+        job: impl FnOnce(OperationContext) -> Result<T> + Send + 'static,
+    ) -> Result<String>
+    where
+        T: Serialize + Send + 'static,
+    {
+        self.enqueue_value_with_label(kind, label, move |context| {
             let value = job(context)?;
             serde_json::to_value(value).map_err(AppError::from)
         })
@@ -91,6 +105,15 @@ impl OperationQueue {
         kind: OperationKind,
         job: impl FnOnce(OperationContext) -> Result<Value> + Send + 'static,
     ) -> Result<String> {
+        self.enqueue_value_with_label(kind, None, job)
+    }
+
+    pub fn enqueue_value_with_label(
+        &self,
+        kind: OperationKind,
+        label: Option<OperationLabel>,
+        job: impl FnOnce(OperationContext) -> Result<Value> + Send + 'static,
+    ) -> Result<String> {
         let id = Uuid::new_v4().to_string();
         let control = Arc::new(AtomicBool::new(false));
         let now = now_millis();
@@ -99,6 +122,7 @@ impl OperationQueue {
             kind,
             state: OperationState::Queued,
             cancel_requested: false,
+            label,
             progress: None,
             result: None,
             error: None,
@@ -328,6 +352,7 @@ pub(crate) fn test_context(cancelled: bool) -> OperationContext {
         kind: OperationKind::Rename,
         state: OperationState::Running,
         cancel_requested: cancelled,
+        label: None,
         progress: None,
         result: None,
         error: None,
@@ -371,6 +396,8 @@ mod tests {
             phase: phase.to_string(),
             current: None,
             total: None,
+            bytes: None,
+            bytes_total: None,
             detail: None,
             cancellable: true,
         }

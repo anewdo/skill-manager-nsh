@@ -110,9 +110,22 @@ pub struct OperationProgress {
     pub current: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total: Option<u64>,
+    /// Bytes received so far, when the transport reports them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
+    /// Total bytes, when the transport knows them before the transfer ends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes_total: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
     pub cancellable: bool,
+}
+
+/// What the UI calls an operation before its result names it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperationLabel {
+    pub name: String,
+    pub source: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -121,6 +134,9 @@ pub struct OperationSnapshot {
     pub kind: OperationKind,
     pub state: OperationState,
     pub cancel_requested: bool,
+    /// The marketplace entry the operation belongs to, when the caller named it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<OperationLabel>,
     pub progress: Option<OperationProgress>,
     pub result: Option<Value>,
     pub error: Option<AppError>,
@@ -338,4 +354,65 @@ pub struct ConnectivityCheck {
     pub ok: bool,
     pub latency_ms: u64,
     pub error: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn patch(value: serde_json::Value) -> SettingsPatch {
+        serde_json::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn empty_patch_keeps_the_current_settings() {
+        let current = Settings::default();
+        assert_eq!(patch(serde_json::json!({})).apply_to(&current), current);
+    }
+
+    #[test]
+    fn partial_patches_merge_fields() {
+        let current = Settings {
+            language: Language::En,
+            theme: Theme::Dark,
+            proxy: ProxySettings {
+                mode: ProxyMode::Custom,
+                custom_url: Some("http://127.0.0.1:7897".to_string()),
+            },
+        };
+
+        let merged = patch(serde_json::json!({ "theme": "light" })).apply_to(&current);
+        assert_eq!(merged.language, Language::En);
+        assert_eq!(merged.theme, Theme::Light);
+        assert_eq!(merged.proxy, current.proxy);
+    }
+
+    #[test]
+    fn proxy_patch_keeps_the_previous_url_when_it_is_omitted() {
+        let current = Settings {
+            proxy: ProxySettings {
+                mode: ProxyMode::Custom,
+                custom_url: Some("http://127.0.0.1:7897".to_string()),
+            },
+            ..Settings::default()
+        };
+
+        let merged = patch(serde_json::json!({ "proxy": { "mode": "system" } })).apply_to(&current);
+        assert_eq!(merged.proxy.mode, ProxyMode::System);
+        assert_eq!(
+            merged.proxy.custom_url.as_deref(),
+            Some("http://127.0.0.1:7897")
+        );
+    }
+
+    #[test]
+    fn unknown_enum_values_do_not_deserialize() {
+        for value in [
+            serde_json::json!({ "language": "fr" }),
+            serde_json::json!({ "theme": "blue" }),
+            serde_json::json!({ "proxy": { "mode": "proxy" } }),
+        ] {
+            assert!(serde_json::from_value::<SettingsPatch>(value).is_err());
+        }
+    }
 }

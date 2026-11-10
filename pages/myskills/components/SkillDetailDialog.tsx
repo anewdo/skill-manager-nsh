@@ -20,6 +20,7 @@ export interface SkillDetailDialogProps {
   text: TextFn;
   errorText: (error: AppError) => string;
   onClose: () => void;
+  onClosed: () => void;
   onRefresh: () => void;
   onCheck: (installation: Installation) => void;
   onUpdate: (installation: Installation) => void;
@@ -35,6 +36,7 @@ export function SkillDetailDialog(props: SkillDetailDialogProps) {
       animation="fade"
       class="m-auto w-[720px] max-h-[680px] gap-4 rounded-(--radius) border border-border bg-popover p-6"
       backdropClass="bg-black/40"
+      onClose={props.onClosed}
       onOpenChange={(event) => {
         if (!event.open) {
           props.onClose();

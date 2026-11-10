@@ -21,11 +21,39 @@ const buttonLabelClass: Record<ButtonVariant, string> = {
   danger: "text-sm text-destructive",
 };
 
+const buttonIconColor: Record<ButtonVariant, IconColor> = {
+  primary: "primary-foreground",
+  secondary: "foreground",
+  ghost: "muted-foreground",
+  danger: "destructive",
+};
+
+export interface SpinnerProps {
+  /** Its diameter in points, default 14. */
+  size?: number;
+  /** The theme token tinting it, default `muted-foreground`. */
+  color?: IconColor;
+}
+
+/** A continuously rotating arc, used inside busy buttons. */
+export function Spinner(props: SpinnerProps) {
+  return (
+    <Icon
+      name="loader"
+      size={props.size ?? 14}
+      color={props.color ?? "muted-foreground"}
+      class="animate-spin"
+    />
+  );
+}
+
 export interface ActionButtonProps {
   label: string;
   onPress: () => void;
   variant?: ButtonVariant;
   disabled?: boolean;
+  /** Shows a rotating indicator next to the label and blocks presses. */
+  busy?: boolean;
   testID?: string;
 }
 
@@ -34,11 +62,16 @@ export function ActionButton(props: ActionButtonProps) {
   return (
     <Button
       class={buttonClass[variant]}
-      disabled={props.disabled === true}
+      disabled={props.disabled === true || props.busy === true}
       onPress={props.onPress}
       testID={props.testID}
     >
-      <Text class={buttonLabelClass[variant]}>{props.label}</Text>
+      <View class="flex-row items-center gap-1.5">
+        <If when={props.busy === true}>
+          {() => <Spinner size={14} color={buttonIconColor[variant]} />}
+        </If>
+        <Text class={buttonLabelClass[variant]}>{props.label}</Text>
+      </View>
     </Button>
   );
 }

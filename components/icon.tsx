@@ -110,6 +110,7 @@ const iconSources = {
       `<path d="M12 16v-4"/>` +
       `<path d="M12 8h.01"/>`,
   ),
+  loader: svg(`<path d="M21 12a9 9 0 1 1-6.219-8.56"/>`),
 };
 
 export type IconName = keyof typeof iconSources;

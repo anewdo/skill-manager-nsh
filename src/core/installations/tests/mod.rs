@@ -148,6 +148,13 @@ fn installation_path(repo: &CentralRepo, relative: &str) -> PathBuf {
         .unwrap()
 }
 
+fn staging_entries(repo: &CentralRepo) -> Vec<PathBuf> {
+    fs::read_dir(repo.staging_dir())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect()
+}
+
 fn run_install(
     repo: &CentralRepo,
     store: &Arc<Store>,
@@ -159,7 +166,12 @@ fn run_install(
     let job_store = store.clone();
     let id = queue
         .enqueue(OperationKind::Install, move |context| {
-            install_with_download(&job_repo, &job_store, source, || Ok(downloaded), &context)
+            let (installation, unmanaged_copy) =
+                install_with_download(&job_repo, &job_store, source, || Ok(downloaded), &context)?;
+            Ok(InstallOutcome {
+                installation,
+                unmanaged_copy,
+            })
         })
         .unwrap();
     wait_terminal(&queue, &id)

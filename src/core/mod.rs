@@ -1,5 +1,6 @@
 pub mod central_repo;
 pub mod content_identity;
+pub mod display;
 pub mod error;
 pub mod http;
 pub mod installations;

@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
+use serde::Serialize;
 use uuid::Uuid;
 
 use super::central_repo::CentralRepo;
@@ -21,21 +22,40 @@ use super::store::Store;
 
 const MAX_LOCAL_SKILL_MD_BYTES: u64 = 1024 * 1024;
 
+/// An install result plus a note about a same-named copy the app does not manage.
+#[derive(Debug, Serialize)]
+pub struct InstallOutcome {
+    #[serde(flatten)]
+    installation: Installation,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unmanaged_copy: Option<String>,
+}
+
+/// A marketplace directory that has no database record yet.
+struct UnmanagedRoot {
+    name: String,
+    identical: bool,
+}
+
 pub fn install_marketplace(
     repo: &CentralRepo,
     store: &Store,
     source: SkillSource,
     proxy: &ProxySettings,
     context: &OperationContext,
-) -> Result<Installation> {
+) -> Result<InstallOutcome> {
     let source = canonical_source(source)?;
-    install_with_download(
+    let (installation, unmanaged_copy) = install_with_download(
         repo,
         store,
         source.clone(),
-        || download(repo, &source, proxy),
+        || download(repo, &source, proxy, context),
         context,
-    )
+    )?;
+    Ok(InstallOutcome {
+        installation,
+        unmanaged_copy,
+    })
 }
 
 fn install_with_download(
@@ -44,30 +64,39 @@ fn install_with_download(
     source: SkillSource,
     download: impl FnOnce() -> Result<DownloadedSkill>,
     context: &OperationContext,
-) -> Result<Installation> {
-    reject_existing_lineage(&store.list_installations(Category::Marketplace)?, &source)?;
+) -> Result<(Installation, Option<String>)> {
+    clear_missing_lineage(repo, store, &source, context)?;
     context.progress(progress("downloading", true))?;
     let downloaded = download()?;
     context.progress(progress("validating", true))?;
     let hash = content_hash(&downloaded.skill_root)?;
 
-    let existing = store.list_installations(Category::Marketplace)?;
+    let mut existing = store.list_installations(Category::Marketplace)?;
     reject_existing_lineage(&existing, &source)?;
-    if let Some(installation) = find_identical(repo, &existing, &downloaded.skill_root, &hash)? {
-        return Ok(installation);
-    }
 
-    let used_root_keys = existing
-        .iter()
-        .map(|installation| installation.root_key.clone())
-        .collect::<BTreeSet<_>>();
-    let relative_root = allocate_marketplace_name(&downloaded.metadata.name, &used_root_keys)?;
+    let skill_name = downloaded.metadata.name.clone();
+    let mut source = source;
+    source.digest = downloaded.digest.clone();
+    if let Some(installation) = find_identical(repo, &existing, &downloaded.skill_root, &hash)? {
+        return Ok((installation, None));
+    }
+    let (unmanaged, occupied) =
+        inspect_marketplace_roots(repo, &existing, &skill_name, &downloaded.skill_root, &hash)?;
+    if let Some(adoptable) = unmanaged.iter().find(|root| root.identical) {
+        let installation =
+            adopt_unmanaged_root(store, adoptable, &skill_name, &downloaded, &source, &hash)?;
+        context.installations_changed();
+        return Ok((installation, None));
+    }
+    let unmanaged_copy = unmanaged.first().map(|root| root.name.clone());
+
+    let relative_root = allocate_marketplace_name(&skill_name, &occupied)?;
     context.progress(progress("installing", false))?;
 
-    let final_installations = store.list_installations(Category::Marketplace)?;
-    reject_existing_lineage(&final_installations, &source)?;
+    existing = store.list_installations(Category::Marketplace)?;
+    reject_existing_lineage(&existing, &source)?;
     let final_root_key = root_key(&relative_root);
-    if final_installations
+    if existing
         .iter()
         .any(|installation| installation.root_key == final_root_key)
     {
@@ -90,8 +119,6 @@ fn install_with_download(
     }
 
     let now = Utc::now().timestamp_millis();
-    let mut source = source;
-    source.digest = downloaded.digest.clone();
     let installation = Installation {
         id: Uuid::new_v4().to_string(),
         category: Category::Marketplace,
@@ -122,7 +149,153 @@ fn install_with_download(
     }
 
     context.installations_changed();
+    Ok((installation, unmanaged_copy))
+}
+
+/// Takes an unmanaged marketplace directory into the database when its files
+/// match the download, so the same skill is not stored twice.
+fn adopt_unmanaged_root(
+    store: &Store,
+    root: &UnmanagedRoot,
+    skill_name: &str,
+    downloaded: &DownloadedSkill,
+    source: &SkillSource,
+    hash: &str,
+) -> Result<Installation> {
+    let now = Utc::now().timestamp_millis();
+    let installation = Installation {
+        id: Uuid::new_v4().to_string(),
+        category: Category::Marketplace,
+        display_name: skill_name.to_string(),
+        root_relpath: root.name.clone(),
+        root_key: root_key(&root.name),
+        source: Some(source.clone()),
+        installed_revision: downloaded.revision.clone(),
+        remote_revision: None,
+        baseline_hash: Some(hash.to_string()),
+        current_hash: Some(hash.to_string()),
+        local_state: LocalState::Clean,
+        update_state: UpdateState::Unknown,
+        update_checked_at: None,
+        created_at: now,
+        updated_at: now,
+        last_error: None,
+    };
+    store.insert_installation(&installation)?;
     Ok(installation)
+}
+
+/// Scans the marketplace directory for entries without a database record:
+/// names that collide with the incoming skill stay available for adoption, and
+/// every entry name is reported as occupied so a new install never overwrites one.
+fn inspect_marketplace_roots(
+    repo: &CentralRepo,
+    existing: &[Installation],
+    skill_name: &str,
+    downloaded_root: &Path,
+    hash: &str,
+) -> Result<(Vec<UnmanagedRoot>, BTreeSet<String>)> {
+    let managed = existing
+        .iter()
+        .map(|installation| installation.root_key.clone())
+        .collect::<BTreeSet<_>>();
+    let mut occupied = managed.clone();
+    let mut unmanaged = Vec::new();
+    let entries = match fs::read_dir(repo.skills_root(Category::Marketplace)) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((unmanaged, occupied));
+        }
+        Err(error) => return Err(error.into()),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let key = root_key(&name);
+        occupied.insert(key.clone());
+        if managed.contains(&key) || !is_skill_name_variant(&key, skill_name) {
+            continue;
+        }
+        let file_type = entry.file_type()?;
+        if !file_type.is_dir() || file_type.is_symlink() {
+            continue;
+        }
+        let path = entry.path();
+        let identical = content_hash(&path).is_ok_and(|local| local == hash)
+            && files_identical(downloaded_root, &path).unwrap_or(false);
+        unmanaged.push(UnmanagedRoot { name, identical });
+    }
+    unmanaged.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok((unmanaged, occupied))
+}
+
+/// Whether `candidate` is the skill name or one of its numeric suffixes.
+fn is_skill_name_variant(candidate: &str, skill_name: &str) -> bool {
+    let base = root_key(skill_name);
+    if candidate == base {
+        return true;
+    }
+    candidate
+        .strip_prefix(&format!("{base}-"))
+        .is_some_and(|suffix| {
+            !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit())
+        })
+}
+
+/// A recorded lineage whose files disappeared is reinstalled from scratch: the
+/// stale record is dropped first, otherwise installing it again would be
+/// rejected as a duplicate source.
+fn clear_missing_lineage(
+    repo: &CentralRepo,
+    store: &Store,
+    source: &SkillSource,
+    context: &OperationContext,
+) -> Result<()> {
+    let Some(installation) = store.marketplace_installation_by_source(&source.source_key)? else {
+        return Ok(());
+    };
+    let path = repo.installation_path(Category::Marketplace, &installation.root_relpath)?;
+    match fs::symlink_metadata(&path) {
+        Ok(_) => {
+            return Err(AppError::new(
+                ErrorCode::Conflict,
+                "this source is already installed; use update instead",
+            )
+            .with_details(serde_json::json!({ "installationId": installation.id })));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    store.delete_installation_record(&installation.id)?;
+    context.installations_changed();
+    Ok(())
+}
+
+/// Marketplace listings also report installations whose files are gone, so a
+/// card returns to the installable state as soon as the local copy disappears.
+pub fn list_marketplace_installations(
+    repo: &CentralRepo,
+    store: &Store,
+) -> Result<Vec<Installation>> {
+    let mut installations = store.list_installations(Category::Marketplace)?;
+    let now = Utc::now().timestamp_millis();
+    for installation in &mut installations {
+        let path = repo.installation_path(Category::Marketplace, &installation.root_relpath)?;
+        let missing = matches!(
+            fs::symlink_metadata(&path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound
+        );
+        if missing && installation.local_state != LocalState::Missing {
+            store.update_local_state(
+                &installation.id,
+                installation.current_hash.as_deref(),
+                LocalState::Missing,
+                now,
+            )?;
+            installation.local_state = LocalState::Missing;
+        }
+    }
+    Ok(installations)
 }
 
 fn reject_existing_lineage(existing: &[Installation], source: &SkillSource) -> Result<()> {
@@ -169,6 +342,8 @@ fn progress(phase: &str, cancellable: bool) -> OperationProgress {
         phase: phase.to_string(),
         current: None,
         total: None,
+        bytes: None,
+        bytes_total: None,
         detail: None,
         cancellable,
     }
@@ -356,7 +531,7 @@ pub fn check_updates(
         |id| {
             let installation = store.installation(id)?.ok_or_else(installation_not_found)?;
             let source = remote_source(&installation)?;
-            download(repo, &source, proxy)
+            download(repo, &source, proxy, context)
         },
         context,
     )
@@ -470,7 +645,7 @@ pub fn apply_update(
         store,
         id,
         policy,
-        || download(repo, &source, proxy),
+        || download(repo, &source, proxy, context),
         context,
     )
 }
@@ -860,6 +1035,8 @@ fn batch_progress(phase: &str, current: u64, total: u64, cancellable: bool) -> O
         phase: phase.to_string(),
         current: Some(current),
         total: Some(total),
+        bytes: None,
+        bytes_total: None,
         detail: None,
         cancellable,
     }

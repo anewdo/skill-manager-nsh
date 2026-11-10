@@ -1,12 +1,5 @@
 use super::*;
 
-fn staging_entries(repo: &CentralRepo) -> Vec<PathBuf> {
-    fs::read_dir(repo.staging_dir())
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .collect()
-}
-
 fn read_skill_md(repo: &CentralRepo, relative: &str) -> String {
     fs::read_to_string(installation_path(repo, relative).join("SKILL.md")).unwrap()
 }

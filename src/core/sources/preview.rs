@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use super::{DownloadedSkill, download, skills_sh, well_known};
+use super::{DownloadedSkill, SilentObserver, download, skills_sh, well_known};
 use crate::core::central_repo::CentralRepo;
 use crate::core::error::{AppError, ErrorCode, Result};
 use crate::core::metadata::parse_skill_md_content;
@@ -125,7 +125,7 @@ pub fn load(
         return Ok(preview);
     }
     cached_or_fetch(cache, source, |source| {
-        let downloaded = download(repo, source, proxy)?;
+        let downloaded = download(repo, source, proxy, &SilentObserver)?;
         from_downloaded(source.clone(), downloaded)
     })
 }
@@ -282,14 +282,7 @@ mod tests {
             "---\nname: demo\ndescription: Demo skill\n---\n# Demo\n",
         )
         .unwrap();
-        let candidate = SkillCandidate {
-            root: download.path().to_path_buf(),
-            relative_root: ".".to_string(),
-            metadata: SkillMetadata {
-                name: "demo".to_string(),
-                description: "Demo skill".to_string(),
-            },
-        };
+        let candidate = skill_candidate(download.path());
         let downloaded = DownloadedSkill::from_candidate(
             download,
             &temp_path,
@@ -317,15 +310,8 @@ mod tests {
             vec![b'a'; MAX_SKILL_MD_BYTES as usize + 1],
         )
         .unwrap();
-        let candidate = SkillCandidate {
-            root: download.path().to_path_buf(),
-            relative_root: ".".to_string(),
-            metadata: SkillMetadata {
-                name: "demo".to_string(),
-                description: "Demo skill".to_string(),
-            },
-        };
         let temp_path = download.path().to_path_buf();
+        let candidate = skill_candidate(download.path());
         let downloaded =
             DownloadedSkill::from_candidate(download, &temp_path, candidate, None, None).unwrap();
         assert_eq!(
@@ -340,6 +326,17 @@ mod tests {
 
     fn skill_source(name: &str) -> SkillSource {
         skills_sh::marketplace_source("owner/repo", name).unwrap()
+    }
+
+    fn skill_candidate(root: &Path) -> SkillCandidate {
+        SkillCandidate {
+            root: root.to_path_buf(),
+            relative_root: ".".to_string(),
+            metadata: SkillMetadata {
+                name: "demo".to_string(),
+                description: "Demo skill".to_string(),
+            },
+        }
     }
 
     fn sample_preview(name: &str) -> SkillPreview {

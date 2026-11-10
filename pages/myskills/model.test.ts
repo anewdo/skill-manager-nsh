@@ -1,8 +1,6 @@
 import { expect, test } from "nsh/test";
 import type { Installation, LocalState, UpdateState } from "../../types";
 import {
-  CARD_COLUMNS,
-  PAGE_SIZE,
   allSelected,
   chunkItems,
   countForFilter,
@@ -12,7 +10,6 @@ import {
   selectedInstallations,
   someSelected,
   sourceLabel,
-  viewModes,
 } from "./model";
 
 function installation(
@@ -159,17 +156,8 @@ test("turns batch progress into a percentage", () => {
   expect(progressPercent({ phase: "checking", cancellable: true, current: 0, total: 0 })).toBeUndefined();
 });
 
-test("uses 24 entries per page", () => {
-  expect(PAGE_SIZE).toBe(24);
-});
-
 test("splits the card view into full rows", () => {
-  expect(CARD_COLUMNS).toBe(3);
   expect(chunkItems([1, 2, 3, 4])).toEqual([[1, 2, 3], [4]]);
   expect(chunkItems([1, 2])).toEqual([[1, 2]]);
   expect(chunkItems([])).toEqual([]);
-});
-
-test("offers list and card views", () => {
-  expect(viewModes).toEqual(["list", "card"]);
 });

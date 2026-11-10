@@ -1,14 +1,14 @@
-import { cleanup, computed, effect, signal } from "nsh";
+import { cleanup, computed, effect, signal, windowSize } from "nsh";
 import { Scroll, Text, View } from "nsh";
-import { Dialog, Input, Pagination, Progress, Tab, Tabs, TextView } from "nsh/base";
+import { Button, Dialog, Input, Pagination, Popover, Tab, Tabs, TextView } from "nsh/base";
 import * as api from "../../api";
-import { ActionButton, Badge, Banner, type BannerTone } from "../../components/ui";
-import { conflictInstallationId, describeError, toAppError } from "../../errors";
+import { Icon } from "../../components/icon";
+import { ActionButton, Badge, Banner, IconButton, Spinner } from "../../components/ui";
+import { describeError, toAppError } from "../../errors";
 import { translate, type MessageKey, type MessageParams } from "../../i18n";
-import type { AppStore } from "../../store";
+import type { AppStore, InstallTracker } from "../../store";
 import type {
   AppError,
-  Installation,
   LeaderboardKind,
   MarketplaceSkill,
   OperationProgress,
@@ -16,17 +16,16 @@ import type {
   SkillPreview,
 } from "../../types";
 import {
-  GRID_COLUMNS,
   PAGE_SIZE,
   SEARCH_LIMIT,
   chunk,
   clampPage,
   filterBySource,
   formatCount,
-  installationById,
   installedLineages,
   pageCount,
   pageRange,
+  gridColumnsFor,
   paginate,
   skillBody,
   type SourceFilter,
@@ -57,14 +56,9 @@ const filterTabTextClass = "text-xs text-muted-foreground group-selected:text-fo
 const paginationItemClass =
   "group rounded-(--radius) px-2 py-1 text-xs text-muted-foreground active:bg-accent selected:bg-secondary selected:text-foreground disabled:opacity-40";
 
-interface InstallNotice {
-  tone: BannerTone;
-  message: string;
-}
-
-function fillerCells(count: number): number[] {
+function fillerCells(count: number, columns: number): number[] {
   const cells: number[] = [];
-  for (let index = count; index < GRID_COLUMNS; index += 1) {
+  for (let index = count; index < columns; index += 1) {
     cells.push(index);
   }
   return cells;
@@ -94,18 +88,17 @@ export function MarketplacePage(props: { store: AppStore }) {
   const loading = signal(false);
   const loadError = signal<AppError | null>(null);
   const selected = signal<MarketplaceSkill | null>(null);
+  const previewOpen = signal(false);
   const preview = signal<SkillPreview | null>(null);
   const previewLoading = signal(false);
   const previewError = signal<AppError | null>(null);
-  const installOperationId = signal<string | null>(null);
-  const installEntryId = signal<string | null>(null);
-  const installNotice = signal<InstallNotice | null>(null);
 
   const installed = computed(() => installedLineages(props.store.installations()));
   const filtered = computed(() => filterBySource(dataset() ?? [], sourceFilter()));
   const totalPages = computed(() => pageCount(filtered().length));
   const currentPage = computed(() => clampPage(page(), totalPages()));
-  const rows = computed(() => chunk(paginate(filtered(), currentPage())));
+  const columns = computed(() => gridColumnsFor(windowSize().width));
+  const rows = computed(() => chunk(paginate(filtered(), currentPage()), columns()));
   const hasSkills = computed(() => (dataset()?.length ?? 0) > 0);
   const rangeSummary = computed(() => {
     const range = pageRange(currentPage(), filtered().length);
@@ -118,30 +111,10 @@ export function MarketplacePage(props: { store: AppStore }) {
       total: filtered().length,
     });
   });
-  const trackedInstall = computed<OperationSnapshot | null>(() => {
-    const id = installOperationId();
-    if (id !== null) {
-      const snapshot = props.store.operation(id);
-      if (snapshot) {
-        return snapshot;
-      }
-    }
-    const active = props.store.activeOperation();
-    return active !== null && active.kind === "install" ? active : null;
-  });
-  const runningInstall = computed<OperationSnapshot | null>(() => {
-    const snapshot = trackedInstall();
-    if (snapshot === null || (snapshot.state !== "queued" && snapshot.state !== "running")) {
-      return null;
-    }
-    return snapshot;
-  });
 
   let loadSequence = 0;
   let previewSequence = 0;
   let searchTimer: ReturnType<typeof setTimeout> | null = null;
-  let installBaseline: Set<string> | null = null;
-  let settledOperationId: string | null = null;
 
   function errorText(error: AppError): string {
     return describeError(error, translate(props.store.settings()?.language ?? "zh_cn"));
@@ -230,6 +203,7 @@ export function MarketplacePage(props: { store: AppStore }) {
 
   async function openPreview(entry: MarketplaceSkill): Promise<void> {
     selected.set(entry);
+    previewOpen.set(true);
     preview.set(null);
     previewError.set(null);
     const request = ++previewSequence;
@@ -254,110 +228,182 @@ export function MarketplacePage(props: { store: AppStore }) {
 
   function closePreview(): void {
     previewSequence += 1;
+    previewOpen.set(false);
+  }
+
+  function finishClosePreview(): void {
+    if (previewOpen()) {
+      return;
+    }
     selected.set(null);
     preview.set(null);
     previewError.set(null);
     previewLoading.set(false);
   }
 
-  function startInstall(entry: MarketplaceSkill): void {
-    installNotice.set(null);
-    installBaseline = new Set(props.store.installations().map((item) => item.id));
-    settledOperationId = null;
-    try {
-      const id = api.installMarketplace(entry.lineage);
-      installEntryId.set(entry.id);
-      installOperationId.set(id);
-    } catch (error) {
-      installNotice.set({
-        tone: "error",
-        message: `${text("marketplace.install.failed")}: ${errorText(toAppError(error))}`,
-      });
-    }
+  function installTracker(entry: MarketplaceSkill): InstallTracker | null {
+    return (
+      props.store
+        .installs()
+        .find((tracker) => tracker.sourceKey === entry.lineage.source_key) ?? null
+    );
   }
 
-  function cancelInstall(snapshot: OperationSnapshot): void {
-    try {
-      api.cancelOperation(snapshot.id);
-    } catch (error) {
-      installNotice.set({
-        tone: "error",
-        message: `${text("marketplace.install.failed")}: ${errorText(toAppError(error))}`,
-      });
-    }
+  function installSnapshot(entry: MarketplaceSkill): OperationSnapshot | null {
+    const tracker = installTracker(entry);
+    return tracker === null ? null : props.store.operation(tracker.operationId);
   }
 
-  function isEntryInstalling(entryId: string): boolean {
-    return runningInstall() !== null && installEntryId() === entryId;
+  function isEntryInstalling(entry: MarketplaceSkill): boolean {
+    return installTracker(entry) !== null;
   }
 
-  function installPhaseText(snapshot: OperationSnapshot): string {
-    if (snapshot.state === "queued") {
-      return text("marketplace.install.queued");
-    }
-    switch (snapshot.progress?.phase) {
-      case "downloading":
-        return text("marketplace.install.downloading");
-      case "validating":
-        return text("marketplace.install.validating");
-      case "installing":
-        return text("marketplace.install.installing");
-      default:
-        return text("common.loading");
-    }
-  }
-
-  function canCancel(snapshot: OperationSnapshot): boolean {
-    return snapshot.state === "queued" || snapshot.progress?.cancellable === true;
-  }
+  const queueOpen = signal(false);
+  const installQueue = props.store.installQueue;
+  const installSpeeds = props.store.installSpeeds;
+  const hasFailedInstalls = computed(() =>
+    installQueue().some((snapshot) => snapshot.state === "failed"),
+  );
 
   effect(() => {
-    const snapshot = trackedInstall();
-    if (snapshot === null) {
-      return;
+    if (installQueue().length === 0) {
+      queueOpen.set(false);
     }
-    if (snapshot.state !== "succeeded" && snapshot.state !== "failed" && snapshot.state !== "cancelled") {
-      return;
+  });
+
+  function phaseLabel(phase: string): string {
+    switch (phase) {
+      case "downloading":
+        return text("marketplace.queue.downloading");
+      case "validating":
+        return text("marketplace.queue.validating");
+      case "installing":
+        return text("marketplace.queue.installing");
+      case "renaming":
+        return text("marketplace.queue.renaming");
+      case "deleting":
+        return text("marketplace.queue.deleting");
+      case "checking":
+        return text("marketplace.queue.checking");
+      default:
+        return phase;
     }
-    if (settledOperationId === snapshot.id) {
-      return;
+  }
+
+  function formatBytes(bytes: number): string {
+    const units = ["B", "KB", "MB", "GB"];
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit += 1;
     }
-    settledOperationId = snapshot.id;
-    if (snapshot.state === "cancelled") {
-      installNotice.set({ tone: "warning", message: text("marketplace.install.cancelled") });
-      return;
+    return unit === 0 ? `${Math.round(value)} B` : `${value.toFixed(1)} ${units[unit]}`;
+  }
+
+  /** The second line of a queue row: transfer numbers while downloading, else the phase. */
+  function queueRowDetail(snapshot: OperationSnapshot): string {
+    if (snapshot.state === "queued") {
+      return text("marketplace.queue.waiting");
+    }
+    if (snapshot.cancel_requested) {
+      return text("marketplace.queue.cancelling");
     }
     if (snapshot.state === "failed") {
-      const error = snapshot.error === null ? null : toAppError(snapshot.error);
-      const conflictId = error === null ? null : conflictInstallationId(error);
-      if (error !== null && conflictId !== null) {
-        const existing = installationById(props.store.installations(), conflictId);
-        installNotice.set({
-          tone: "error",
-          message: text("marketplace.install.conflict", {
-            name: existing?.display_name ?? conflictId,
-          }),
-        });
-        return;
-      }
-      installNotice.set({
-        tone: "error",
-        message: error === null
-          ? text("marketplace.install.failed")
-          : `${text("marketplace.install.failed")}: ${errorText(error)}`,
-      });
-      return;
+      return snapshot.error === null
+        ? text("marketplace.queue.failed")
+        : errorText(snapshot.error);
     }
-    const result = snapshot.result as Installation | null;
-    const name = result?.display_name ?? "";
-    const reused = result !== null && (installBaseline?.has(result.id) ?? false);
-    installNotice.set({
-      tone: "success",
-      message: reused
-        ? text("marketplace.install.reused", { name })
-        : text("marketplace.install.succeeded", { name }),
-    });
-  });
+    const progress = snapshot.progress;
+    if (progress === null) {
+      return text("marketplace.queue.downloading");
+    }
+    const parts: string[] = [];
+    const percent = progressPercent(progress);
+    if (percent !== undefined) {
+      parts.push(`${Math.round(percent)}%`);
+    }
+    if (progress.phase === "downloading") {
+      const speed = installSpeeds()[snapshot.id];
+      if (speed !== undefined && speed > 0) {
+        parts.push(`${formatBytes(speed)}/s`);
+      }
+      if (progress.bytes !== undefined) {
+        const total =
+          progress.bytes_total === undefined
+            ? text("marketplace.queue.unknownTotal")
+            : formatBytes(progress.bytes_total);
+        parts.push(`${formatBytes(progress.bytes)} / ${total}`);
+      }
+    } else {
+      parts.push(phaseLabel(progress.phase));
+    }
+    return parts.length === 0 ? phaseLabel(progress.phase) : parts.join(" · ");
+  }
+
+  function renderQueueRow(snapshot: OperationSnapshot) {
+    const failed = snapshot.state === "failed";
+    const cancellable =
+      snapshot.state === "queued" || snapshot.progress?.cancellable === true;
+    return (
+      <View class="flex-row items-center gap-2 rounded-(--radius) px-2 py-1.5 hover:bg-accent">
+        <View class="flex-1 gap-0.5">
+          <View class="flex-row items-baseline gap-1.5">
+            <Text class="text-sm font-medium text-foreground truncate">
+              {snapshot.label?.name ?? text("marketplace.queue.unnamed")}
+            </Text>
+            <If when={snapshot.label !== undefined && snapshot.label.source !== ""}>
+              {() => (
+                <Text class="flex-1 text-xs text-muted-foreground truncate">
+                  {snapshot.label?.source ?? ""}
+                </Text>
+              )}
+            </If>
+          </View>
+          <Text
+            class={`text-xs truncate ${failed ? "text-destructive" : "text-muted-foreground"}`}
+          >
+            {queueRowDetail(snapshot)}
+          </Text>
+        </View>
+        <If when={failed}>
+          {() => (
+            <IconButton
+              icon="close"
+              label={text("marketplace.queue.dismiss")}
+              onPress={() => props.store.dismissInstall(snapshot.id)}
+            />
+          )}
+        </If>
+        <If when={!failed && cancellable && !snapshot.cancel_requested}>
+          {() => (
+            <IconButton
+              icon="close"
+              label={text("marketplace.queue.cancel")}
+              onPress={() => props.store.cancelInstall(snapshot.id)}
+            />
+          )}
+        </If>
+        <If when={!failed && snapshot.cancel_requested}>
+          {() => <Spinner size={14} />}
+        </If>
+      </View>
+    );
+  }
+
+  /** The button label: the download percentage while transferring, then the phase. */
+  function installButtonLabel(entry: MarketplaceSkill): string {
+    if (installTracker(entry) === null) {
+      return installed().has(entry.lineage.source_key)
+        ? text("marketplace.card.installed")
+        : text("marketplace.card.install");
+    }
+    const snapshot = installSnapshot(entry);
+    if (snapshot === null || snapshot.state === "queued") {
+      return text("marketplace.card.installQueued");
+    }
+    return text("marketplace.card.installing");
+  }
 
   cleanup(() => {
     if (searchTimer !== null) {
@@ -367,6 +413,7 @@ export function MarketplacePage(props: { store: AppStore }) {
   });
 
   void load(false);
+  void props.store.refreshInstallations();
 
   function renderCard(entry: MarketplaceSkill) {
     return (
@@ -388,16 +435,16 @@ export function MarketplacePage(props: { store: AppStore }) {
             onPress={() => void openPreview(entry)}
           />
           <ActionButton
-            label={
-              isEntryInstalling(entry.id)
-                ? text("marketplace.card.installing")
-                : installed().has(entry.lineage.source_key)
-                  ? text("marketplace.card.installed")
-                  : text("marketplace.card.install")
-            }
+            label={installButtonLabel(entry)}
             variant="primary"
-            disabled={installed().has(entry.lineage.source_key) || isEntryInstalling(entry.id)}
-            onPress={() => startInstall(entry)}
+            busy={isEntryInstalling(entry)}
+            disabled={installed().has(entry.lineage.source_key) || isEntryInstalling(entry)}
+            onPress={() =>
+              props.store.startInstall(entry.lineage, {
+                name: entry.name,
+                source: entry.source,
+              })
+            }
           />
         </View>
       </View>
@@ -530,39 +577,6 @@ export function MarketplacePage(props: { store: AppStore }) {
             />
           )}
         </If>
-        <If when={installNotice()}>
-          {(notice) => (
-            <Banner
-              tone={notice().tone}
-              message={notice().message}
-              actionLabel={text("marketplace.install.dismiss")}
-              onAction={() => installNotice.set(null)}
-            />
-          )}
-        </If>
-        <If when={runningInstall()}>
-          {(snapshot) => (
-            <View class="flex-row items-center gap-3 rounded-(--radius) border border-border bg-card px-3 py-2">
-              <Text class="text-sm text-foreground">{installPhaseText(snapshot())}</Text>
-              <Progress
-                class="flex-1"
-                value={progressPercent(snapshot().progress)}
-                indeterminate={progressPercent(snapshot().progress) === undefined}
-                trackClass="h-1.5 rounded-full bg-muted"
-                indicatorClass="h-1.5 rounded-full bg-primary"
-              />
-              <If when={canCancel(snapshot())}>
-                {() => (
-                  <ActionButton
-                    label={text("marketplace.install.cancel")}
-                    variant="ghost"
-                    onPress={() => cancelInstall(snapshot())}
-                  />
-                )}
-              </If>
-            </View>
-          )}
-        </If>
       </View>
 
       <If when={dataset() === null && loading()}>
@@ -580,14 +594,14 @@ export function MarketplacePage(props: { store: AppStore }) {
       <If when={dataset() !== null && filtered().length > 0}>
         {() => (
           <Scroll class="flex-1">
-            <View class="gap-4 p-6">
+            <View class="gap-4 px-6 pt-6 pb-24">
               <Each of={rows()} key="index">
                 {(row) => (
                   <View class="flex-row items-stretch gap-4">
                     <Each of={row()}>
                       {(entry) => renderCard(entry())}
                     </Each>
-                    <Each of={fillerCells(row().length)}>
+                    <Each of={fillerCells(row().length, columns())}>
                       {() => <View class="flex-1" />}
                     </Each>
                   </View>
@@ -619,10 +633,11 @@ export function MarketplacePage(props: { store: AppStore }) {
       </If>
 
       <Dialog
-        open={selected() !== null}
+        open={previewOpen()}
         animation="fade"
         class="m-auto w-[720px] max-h-[640px] gap-4 rounded-(--radius) border border-border bg-popover p-6"
         backdropClass="bg-black/40"
+        onClose={finishClosePreview}
         onOpenChange={(event) => {
           if (!event.open) {
             closePreview();
@@ -689,24 +704,79 @@ export function MarketplacePage(props: { store: AppStore }) {
               </Scroll>
               <View class="flex-row justify-end gap-2">
                 <ActionButton
-                  label={
-                    isEntryInstalling(entry().id)
-                      ? text("marketplace.card.installing")
-                      : installed().has(entry().lineage.source_key)
-                        ? text("marketplace.card.installed")
-                        : text("marketplace.card.install")
-                  }
+                  label={installButtonLabel(entry())}
                   variant="primary"
+                  busy={isEntryInstalling(entry())}
                   disabled={
-                    installed().has(entry().lineage.source_key) || isEntryInstalling(entry().id)
+                    installed().has(entry().lineage.source_key) || isEntryInstalling(entry())
                   }
-                  onPress={() => startInstall(entry())}
+                  onPress={() => {
+                    props.store.startInstall(entry().lineage, {
+                      name: entry().name,
+                      source: entry().source,
+                    });
+                    closePreview();
+                  }}
                 />
               </View>
             </View>
           )}
         </If>
       </Dialog>
+
+      <If when={installQueue().length > 0}>
+        {() => (
+          <View style={{ position: "absolute", right: 24, bottom: 24 }}>
+            <Popover
+              open={queueOpen()}
+              onOpenChange={(event) => queueOpen.set(event.open)}
+              placement="top"
+              align="end"
+              offset={8}
+              popupClass="w-[360px] gap-1 rounded-(--radius) border border-border bg-popover p-2"
+              trigger={
+                <Button
+                  class="flex-row items-center gap-2 rounded-full border border-border bg-card px-3 py-2 active:bg-accent"
+                  accessibilityLabel={text("marketplace.queue.button")}
+                  testID="download-queue"
+                >
+                  <Icon name="download" color="foreground" />
+                  <Text class="text-sm text-foreground">
+                    {text("marketplace.queue.button")}
+                  </Text>
+                  <View class="rounded-full bg-secondary px-1.5 py-0.5">
+                    <Text class="text-xs text-secondary-foreground">
+                      {String(installQueue().length)}
+                    </Text>
+                  </View>
+                </Button>
+              }
+            >
+              <View class="gap-1">
+                <View class="flex-row items-center justify-between px-2 py-1">
+                  <Text class="text-sm font-semibold text-foreground">
+                    {text("marketplace.queue.title")}
+                  </Text>
+                  <If when={hasFailedInstalls()}>
+                    {() => (
+                      <ActionButton
+                        label={text("marketplace.queue.clear")}
+                        variant="ghost"
+                        onPress={() => props.store.clearFailedInstalls()}
+                      />
+                    )}
+                  </If>
+                </View>
+                <Scroll class="max-h-[280px]" contentClass="gap-1">
+                  <Each of={installQueue()} key={(item) => item.id}>
+                    {(item) => renderQueueRow(item())}
+                  </Each>
+                </Scroll>
+              </View>
+            </Popover>
+          </View>
+        )}
+      </If>
     </View>
   );
 }

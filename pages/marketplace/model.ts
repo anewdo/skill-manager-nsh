@@ -41,11 +41,25 @@ export function chunk<T>(items: readonly T[], size: number = GRID_COLUMNS): T[][
   return rows;
 }
 
-/** The lineage keys of the installations the app already has. */
+/** The grid's column count for the window's width in points. */
+export function gridColumnsFor(width: number): number {
+  if (width >= 1400) {
+    return 4;
+  }
+  if (width >= 1024) {
+    return 3;
+  }
+  if (width >= 700) {
+    return 2;
+  }
+  return 1;
+}
+
+/** The lineage keys of the installations the app has and whose files still exist. */
 export function installedLineages(installations: readonly Installation[]): Set<string> {
   const keys = new Set<string>();
   for (const installation of installations) {
-    if (installation.source) {
+    if (installation.source && installation.local_state !== "missing") {
       keys.add(installation.source.source_key);
     }
   }

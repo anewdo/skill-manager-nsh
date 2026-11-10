@@ -226,6 +226,12 @@ export function MySkillsPage(props: { store: AppStore }) {
   function closeDetail(): void {
     detailSequence += 1;
     detailId.set(null);
+  }
+
+  function finishCloseDetail(): void {
+    if (detailId() !== null) {
+      return;
+    }
     detail.set(null);
     detailError.set(null);
     detailLoading.set(false);
@@ -688,6 +694,7 @@ export function MySkillsPage(props: { store: AppStore }) {
         text={text}
         errorText={errorText}
         onClose={closeDetail}
+        onClosed={finishCloseDetail}
         onRefresh={refreshDetail}
         onCheck={checkOne}
         onUpdate={requestUpdate}
