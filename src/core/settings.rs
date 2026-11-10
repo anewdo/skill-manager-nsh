@@ -4,8 +4,8 @@ use super::model::{Settings, SettingsPatch};
 use super::store::Store;
 
 pub fn update(store: &Store, patch: SettingsPatch) -> Result<Settings> {
-    let updated = patch.apply_to(&store.settings()?);
-    http::validate_proxy(&updated.proxy)?;
+    let mut updated = patch.apply_to(&store.settings()?);
+    updated.proxy = http::normalize_proxy(&updated.proxy)?;
     store.save_settings(&updated)?;
     Ok(updated)
 }
@@ -81,6 +81,27 @@ mod tests {
         assert_eq!(updated.proxy.mode, ProxyMode::System);
         assert_eq!(
             updated.proxy.custom_url.as_deref(),
+            Some("http://127.0.0.1:7897")
+        );
+    }
+
+    #[test]
+    fn custom_proxy_urls_are_persisted_with_a_scheme() {
+        let store = Store::in_memory().unwrap();
+
+        let updated = update(
+            &store,
+            patch(serde_json::json!({
+                "proxy": { "mode": "custom", "custom_url": "127.0.0.1:7897" }
+            })),
+        )
+        .unwrap();
+        assert_eq!(
+            updated.proxy.custom_url.as_deref(),
+            Some("http://127.0.0.1:7897")
+        );
+        assert_eq!(
+            store.settings().unwrap().proxy.custom_url.as_deref(),
             Some("http://127.0.0.1:7897")
         );
     }

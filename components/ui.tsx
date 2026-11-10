@@ -1,6 +1,6 @@
-import { Image, Text, View } from "nsh";
-import type { ImageAsset } from "nsh";
+import { Text, View } from "nsh";
 import { Button } from "nsh/base";
+import { Icon, type IconColor, type IconName } from "./icon";
 
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 
@@ -52,8 +52,13 @@ const iconButtonClass: Record<IconButtonTone, string> = {
     "h-7 w-7 items-center justify-center rounded-(--radius) active:bg-destructive/10 disabled:opacity-40",
 };
 
+const iconButtonIconColor: Record<IconButtonTone, IconColor> = {
+  default: "foreground",
+  danger: "destructive",
+};
+
 export interface IconButtonProps {
-  icon: ImageAsset;
+  icon: IconName;
   label: string;
   onPress: () => void;
   tone?: IconButtonTone;
@@ -73,7 +78,11 @@ export function IconButton(props: IconButtonProps) {
       testID={props.testID}
     >
       <View class="flex-row items-center justify-center gap-1">
-        <Image src={props.icon} class="h-4 w-4" accessibilityLabel={props.label} />
+        <Icon
+          name={props.icon}
+          color={iconButtonIconColor[tone]}
+          accessibilityLabel={props.label}
+        />
         <If when={props.count !== undefined}>
           {() => (
             <Text class={tone === "danger" ? "text-xs text-destructive" : "text-xs text-foreground"}>

@@ -331,3 +331,11 @@ impl SettingsPatch {
 pub struct CacheClearReport {
     pub cleared_entries: u64,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ConnectivityCheck {
+    pub target: String,
+    pub ok: bool,
+    pub latency_ms: u64,
+    pub error: Option<String>,
+}

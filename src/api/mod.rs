@@ -5,6 +5,7 @@ use serde::Serialize;
 
 use crate::core::central_repo::CentralRepo;
 use crate::core::error::{AppError, Result};
+use crate::core::http;
 use crate::core::installations;
 use crate::core::market;
 use crate::core::model::{
@@ -165,6 +166,15 @@ impl AppNative {
             let mut report = market::clear_cache(&state.market);
             report.cleared_entries += state.preview.clear();
             Ok(report)
+        })
+        .await
+    }
+
+    /// Probes the download sources through the configured proxy.
+    pub async fn test_connectivity() -> std::result::Result<JsonValue, JsError> {
+        run_json(|| {
+            let proxy = app_state()?.store.settings()?.proxy;
+            http::test_connectivity(&proxy)
         })
         .await
     }

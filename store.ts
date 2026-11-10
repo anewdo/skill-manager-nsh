@@ -7,6 +7,7 @@ import type {
   OperationEvent,
   OperationSnapshot,
   Settings,
+  SettingsPatch,
 } from "./types";
 
 export interface AppStore {
@@ -19,6 +20,7 @@ export interface AppStore {
   readonly syncError: Signal<AppError | null>;
   start(): void;
   refreshInstallations(): Promise<void>;
+  saveSettings(patch: SettingsPatch): Promise<Settings>;
   operation(id: string): OperationSnapshot | null;
 }
 
@@ -34,6 +36,7 @@ export function createAppStore(): AppStore {
 
   let started = false;
   let installationsRequest = 0;
+  let settingsQueue: Promise<unknown> = Promise.resolve();
 
   function remember(snapshot: OperationSnapshot): void {
     operations.set({ ...operations(), [snapshot.id]: snapshot });
@@ -141,6 +144,22 @@ export function createAppStore(): AppStore {
     void restoreActiveOperation();
   }
 
+  /**
+   * Applies a partial settings patch and takes effect at once.
+   *
+   * Patches are serialized so rapid auto-save changes cannot overwrite each
+   * other with an older snapshot.
+   */
+  async function saveSettings(patch: SettingsPatch): Promise<Settings> {
+    const request = settingsQueue.then(() => api.updateSettings(patch));
+    settingsQueue = request.catch(() => undefined);
+    const value = await request;
+    settings.set(value);
+    settingsError.set(null);
+    setColorScheme(value.theme);
+    return value;
+  }
+
   function operation(id: string): OperationSnapshot | null {
     return operations()[id] ?? null;
   }
@@ -155,6 +174,7 @@ export function createAppStore(): AppStore {
     syncError,
     start,
     refreshInstallations,
+    saveSettings,
     operation,
   };
 }

@@ -2,6 +2,7 @@ import { nativeModule } from "nsh";
 import type {
   CacheClearReport,
   Category,
+  ConnectivityCheck,
   Installation,
   InstallationDetail,
   LeaderboardKind,
@@ -29,6 +30,7 @@ interface NativeModules {
     getSettings(): Promise<unknown>;
     updateSettings(patch: unknown): Promise<unknown>;
     clearCache(): Promise<unknown>;
+    testConnectivity(): Promise<unknown>;
     dataDirectory(): Promise<unknown>;
     listInstallations(category: string): Promise<unknown>;
     installationDetail(id: string): Promise<unknown>;
@@ -96,6 +98,10 @@ export async function updateSettings(patch: SettingsPatch): Promise<Settings> {
 
 export async function clearCache(): Promise<CacheClearReport> {
   return await AppNative.clearCache() as CacheClearReport;
+}
+
+export async function testConnectivity(): Promise<ConnectivityCheck[]> {
+  return await AppNative.testConnectivity() as ConnectivityCheck[];
 }
 
 export async function dataDirectory(): Promise<string> {

@@ -1,6 +1,5 @@
 import { Scroll, Text, View } from "nsh";
 import { Dialog, TextView } from "nsh/base";
-import trashIcon from "../../../assets/icons/trash.svg";
 import { ActionButton, Banner, IconButton } from "../../../components/ui";
 import type { AppError, Installation, InstallationDetail } from "../../../types";
 import {
@@ -203,7 +202,7 @@ export function SkillDetailDialog(props: SkillDetailDialogProps) {
                   onPress={() => props.onRename(item())}
                 />
                 <IconButton
-                  icon={trashIcon}
+                  icon="trash"
                   label={text("myskills.delete")}
                   tone="danger"
                   disabled={props.busy()}

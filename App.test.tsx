@@ -15,3 +15,22 @@ test("opens the skill library from the sidebar and switches views", async () => 
   await app.press("id:nav-marketplace");
   await app.waitFor("id:nav-library");
 });
+
+test("opens the settings page from the sidebar", async () => {
+  const app = await open("./App.tsx", { width: 1280, height: 800, platform: "windows" });
+  await app.waitFor("id:nav-settings");
+  await app.press("id:nav-settings");
+  await app.waitFor("id:settings-save-status");
+
+  expect(app.count("id:settings-language-en")).toBe(1);
+  expect(app.count("id:settings-theme-dark")).toBe(1);
+  expect(app.count("id:settings-proxy-custom")).toBe(1);
+  expect(app.count("id:settings-test-connectivity")).toBe(1);
+  expect(app.shows("id:settings-proxy-url")).toBe(false);
+
+  await app.press("id:settings-proxy-custom");
+  await app.waitFor("id:settings-proxy-url");
+
+  await app.press("id:settings-proxy-system");
+  expect(app.shows("id:settings-proxy-url")).toBe(false);
+});

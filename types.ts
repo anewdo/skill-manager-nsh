@@ -175,6 +175,15 @@ export interface CacheClearReport {
   cleared_entries: number;
 }
 
+export type ConnectivityTarget = "github" | "skills_sh";
+
+export interface ConnectivityCheck {
+  target: ConnectivityTarget;
+  ok: boolean;
+  latency_ms: number;
+  error: string | null;
+}
+
 export interface MarketplaceSkill {
   id: string;
   skill_id: string;

@@ -1,19 +1,47 @@
 import { mount, signal } from "nsh";
 import { Text, View } from "nsh";
 import { Tab, Tabs } from "nsh/base";
+import { Icon } from "./components/icon";
 import { Banner } from "./components/ui";
 import { describeError } from "./errors";
 import { translate, type MessageKey } from "./i18n";
 import { MarketplacePage } from "./pages/marketplace/Marketplace";
 import { MySkillsPage } from "./pages/myskills/MySkills";
+import { SettingsPage } from "./pages/settings/Settings";
 import { createAppStore } from "./store";
 import type { AppError } from "./types";
 
-type Page = "marketplace" | "library";
+type Page = "marketplace" | "library" | "settings";
 
 const navItemClass =
   "w-full flex-row items-center rounded-(--radius) px-3 py-2 active:bg-accent selected:bg-secondary";
 const navTextClass = "text-sm text-muted-foreground group-selected:text-foreground";
+
+function NavTab(props: {
+  page: Page;
+  current: () => Page;
+  label: string;
+  icon: "store" | "library" | "settings";
+  onPress: () => void;
+  testID: string;
+}) {
+  return (
+    <Tab
+      selected={props.current() === props.page}
+      onPress={props.onPress}
+      class={navItemClass}
+      testID={props.testID}
+    >
+      <View class="flex-row items-center gap-2">
+        <Icon
+          name={props.icon}
+          color={props.current() === props.page ? "foreground" : "muted-foreground"}
+        />
+        <Text class={navTextClass}>{props.label}</Text>
+      </View>
+    </Tab>
+  );
+}
 
 function App() {
   const store = createAppStore();
@@ -34,22 +62,30 @@ function App() {
       <View class="w-[208px] gap-4 border-r border-border bg-card px-3 py-4">
         <Text class="px-3 text-base font-semibold text-foreground">{text("app.title")}</Text>
         <Tabs class="flex-col gap-1">
-          <Tab
-            selected={page() === "marketplace"}
+          <NavTab
+            page="marketplace"
+            current={page}
+            label={text("nav.marketplace")}
+            icon="store"
             onPress={() => page.set("marketplace")}
-            class={navItemClass}
             testID="nav-marketplace"
-          >
-            <Text class={navTextClass}>{text("nav.marketplace")}</Text>
-          </Tab>
-          <Tab
-            selected={page() === "library"}
+          />
+          <NavTab
+            page="library"
+            current={page}
+            label={text("nav.library")}
+            icon="library"
             onPress={() => page.set("library")}
-            class={navItemClass}
             testID="nav-library"
-          >
-            <Text class={navTextClass}>{text("nav.library")}</Text>
-          </Tab>
+          />
+          <NavTab
+            page="settings"
+            current={page}
+            label={text("nav.settings")}
+            icon="settings"
+            onPress={() => page.set("settings")}
+            testID="nav-settings"
+          />
         </Tabs>
       </View>
       <View class="flex-1">
@@ -63,6 +99,7 @@ function App() {
         </View>
         <If when={page() === "marketplace"}>{() => <MarketplacePage store={store} />}</If>
         <If when={page() === "library"}>{() => <MySkillsPage store={store} />}</If>
+        <If when={page() === "settings"}>{() => <SettingsPage store={store} />}</If>
       </View>
     </View>
   );

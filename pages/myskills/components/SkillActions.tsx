@@ -1,5 +1,4 @@
 import { View } from "nsh";
-import trashIcon from "../../../assets/icons/trash.svg";
 import { ActionButton, IconButton } from "../../../components/ui";
 import type { Installation } from "../../../types";
 import type { TextFn } from "../labels";
@@ -41,7 +40,7 @@ export function SkillActions(props: SkillActionsProps) {
         )}
       </If>
       <IconButton
-        icon={trashIcon}
+        icon="trash"
         label={text("myskills.delete")}
         tone="danger"
         disabled={props.busy()}

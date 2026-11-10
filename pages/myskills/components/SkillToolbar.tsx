@@ -1,6 +1,5 @@
 import { Text, View } from "nsh";
 import { Input, Tab, Tabs } from "nsh/base";
-import trashIcon from "../../../assets/icons/trash.svg";
 import { ActionButton, IconButton } from "../../../components/ui";
 import { filterKeys, tabClass, tabTextClass, viewModeKeys, type TextFn } from "../labels";
 import { statusFilters, viewModes, type StatusFilter, type ViewMode } from "../model";
@@ -77,7 +76,7 @@ export function SkillToolbar(props: SkillToolbarProps) {
                 onPress={props.onClearSelection}
               />
               <IconButton
-                icon={trashIcon}
+                icon="trash"
                 label={text("myskills.deleteSelected", { count: props.selectedCount() })}
                 tone="danger"
                 count={props.selectedCount()}
