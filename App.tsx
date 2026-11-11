@@ -90,6 +90,31 @@ function NavTab(props: {
   );
 }
 
+/**
+ * Keeps a page mounted once it has been opened and only hides it afterwards,
+ * so switching back costs a style change instead of rebuilding the page.
+ */
+function PageSlot(props: {
+  page: Page;
+  current: () => Page;
+  visited: () => ReadonlySet<Page>;
+  children: () => ReturnType<typeof View>;
+}) {
+  return (
+    <If when={props.visited().has(props.page)}>
+      {() => (
+        <View
+          class="flex-1"
+          style={{ display: props.current() === props.page ? "flex" : "none" }}
+          testID={`page-${props.page}`}
+        >
+          {props.children()}
+        </View>
+      )}
+    </If>
+  );
+}
+
 const initialWindowWidth = 1200;
 const initialWindowHeight = 720;
 
@@ -115,6 +140,13 @@ function App() {
   store.start();
   placeWindow();
   const page = signal<Page>("marketplace");
+  const visited = signal<ReadonlySet<Page>>(new Set<Page>(["marketplace"]));
+  const openPage = (next: Page): void => {
+    if (!visited().has(next)) {
+      visited.set(new Set([...visited(), next]));
+    }
+    page.set(next);
+  };
 
   const text = (key: MessageKey): string =>
     translate(store.settings()?.language ?? "zh_cn")(key);
@@ -135,7 +167,7 @@ function App() {
             current={page}
             label={text("nav.marketplace")}
             icon="store"
-            onPress={() => page.set("marketplace")}
+            onPress={() => openPage("marketplace")}
             testID="nav-marketplace"
           />
           <NavTab
@@ -143,7 +175,7 @@ function App() {
             current={page}
             label={text("nav.library")}
             icon="library"
-            onPress={() => page.set("library")}
+            onPress={() => openPage("library")}
             testID="nav-library"
           />
           <NavTab
@@ -151,7 +183,7 @@ function App() {
             current={page}
             label={text("nav.settings")}
             icon="settings"
-            onPress={() => page.set("settings")}
+            onPress={() => openPage("settings")}
             testID="nav-settings"
           />
         </Tabs>
@@ -165,9 +197,15 @@ function App() {
             {(error) => <Banner tone="error" message={errorMessage(error())} />}
           </If>
         </View>
-        <If when={page() === "marketplace"}>{() => <MarketplacePage store={store} />}</If>
-        <If when={page() === "library"}>{() => <MySkillsPage store={store} />}</If>
-        <If when={page() === "settings"}>{() => <SettingsPage store={store} />}</If>
+        <PageSlot page="marketplace" current={page} visited={visited}>
+          {() => <MarketplacePage store={store} />}
+        </PageSlot>
+        <PageSlot page="library" current={page} visited={visited}>
+          {() => <MySkillsPage store={store} />}
+        </PageSlot>
+        <PageSlot page="settings" current={page} visited={visited}>
+          {() => <SettingsPage store={store} />}
+        </PageSlot>
       </View>
       <ToastHost store={store} />
     </View>
