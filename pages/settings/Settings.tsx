@@ -1,24 +1,25 @@
-import { computed, effect, signal } from "nsh";
-import { Scroll, Text, View } from "nsh";
-import { Input, Tab, Tabs } from "nsh/base";
-import * as api from "../../lib/api";
-import { Icon, type IconName } from "../../components/icon";
-import { ActionButton, Banner } from "../../components/ui";
-import { describeError, toAppError } from "../../lib/errors";
-import { translate, type MessageKey } from "../../i18n";
+import { Scroll, View } from "nsh";
+import { Icon } from "../../components/icon";
+import {
+  Banner,
+  Button,
+  Field,
+  IconButton,
+  Label,
+  Notices,
+  Page,
+  PageHeader,
+  Section,
+  Segmented,
+  TextField,
+} from "../../components/ui";
+import type { MessageKey } from "../../i18n";
+import type { ConnectivityTarget, Language, ProxyMode, Theme } from "../../lib/types";
 import type { AppStore } from "../../store";
-import type {
-  AppError,
-  ConnectivityCheck,
-  ConnectivityTarget,
-  Language,
-  ProxyMode,
-  SettingsPatch,
-  Theme,
-} from "../../lib/types";
+import { createSettingsController, type SaveStatus } from "./controller";
 
 const languages: Language[] = ["zh_cn", "en"];
-const themes: Theme[] = ["light", "dark", "system"];
+const themes: Theme[] = ["system", "light", "dark"];
 const proxyModes: ProxyMode[] = ["system", "none", "custom"];
 
 const languageKeys: Record<Language, MessageKey> = {
@@ -27,9 +28,9 @@ const languageKeys: Record<Language, MessageKey> = {
 };
 
 const themeKeys: Record<Theme, MessageKey> = {
+  system: "settings.theme.system",
   light: "settings.theme.light",
   dark: "settings.theme.dark",
-  system: "settings.theme.system",
 };
 
 const proxyModeKeys: Record<ProxyMode, MessageKey> = {
@@ -43,350 +44,172 @@ const targetKeys: Record<ConnectivityTarget, MessageKey> = {
   skills_sh: "settings.proxy.target.skills_sh",
 };
 
-const tabClass = "group rounded-(--radius) px-2.5 py-1 active:bg-accent selected:bg-secondary";
-const tabTextClass = "text-xs text-muted-foreground group-selected:text-foreground";
-const sectionClass = "gap-3 rounded-(--radius) border border-border bg-card p-5";
-const rowLabelClass = "w-[120px] text-sm text-foreground";
-const sectionTitleClass = "text-sm font-semibold text-foreground";
-const sectionHintClass = "text-xs text-muted-foreground";
-
-function SectionTitle(props: { icon: IconName; label: string }) {
-  return (
-    <View class="flex-row items-center gap-2">
-      <Icon name={props.icon} color="foreground" />
-      <Text class={sectionTitleClass}>{props.label}</Text>
-    </View>
-  );
-}
+const statusKeys: Record<SaveStatus, MessageKey> = {
+  idle: "settings.status.auto",
+  saving: "settings.status.saving",
+  saved: "settings.status.saved",
+};
 
 export function SettingsPage(props: { store: AppStore }) {
-  const text = (key: MessageKey, params?: Record<string, string | number>): string =>
-    translate(props.store.settings()?.language ?? "zh_cn")(key, params);
-
-  const language = signal<Language>("zh_cn");
-  const theme = signal<Theme>("system");
-  const proxyMode = signal<ProxyMode>("system");
-  const customUrl = signal("");
-  const status = signal<"idle" | "saving" | "saved">("idle");
-  const saveError = signal<string | null>(null);
-
-  const dataDir = signal<string | null>(null);
-  const dataDirLoading = signal(false);
-  const dataDirError = signal<AppError | null>(null);
-
-  const testBusy = signal(false);
-  const testChecks = signal<ConnectivityCheck[]>([]);
-  const testError = signal<AppError | null>(null);
-
-  const statusText = computed(() => {
-    switch (status()) {
-      case "saving":
-        return text("settings.status.saving");
-      case "saved":
-        return text("settings.status.saved");
-      default:
-        return text("settings.status.auto");
-    }
-  });
-
-  const errorText = (error: AppError): string =>
-    describeError(error, translate(props.store.settings()?.language ?? "zh_cn"));
-
-  effect(() => {
-    const current = props.store.settings();
-    if (current === null) {
-      return;
-    }
-    language.set(current.language);
-    theme.set(current.theme);
-    proxyMode.set(current.proxy.mode);
-    customUrl.set(current.proxy.custom_url ?? "");
-  });
-
-  async function persist(patch: SettingsPatch): Promise<boolean> {
-    status.set("saving");
-    saveError.set(null);
-    try {
-      await props.store.saveSettings(patch);
-      status.set("saved");
-      return true;
-    } catch (error) {
-      status.set("idle");
-      saveError.set(`${text("settings.saveFailed")}: ${errorText(toAppError(error))}`);
-      return false;
-    }
-  }
-
-  async function saveCustomUrl(): Promise<boolean> {
-    if (proxyMode() !== "custom") {
-      return true;
-    }
-    const url = customUrl().trim();
-    if (url === "") {
-      saveError.set(text("settings.proxy.required"));
-      return false;
-    }
-    const current = props.store.settings();
-    const saved = current !== null && current.proxy.mode === "custom"
-      ? (current.proxy.custom_url ?? "")
-      : null;
-    const normalized = url.includes("://") ? url : `http://${url}`;
-    if (saved !== null && saved === normalized) {
-      return true;
-    }
-    return await persist({ proxy: { mode: "custom", custom_url: url } });
-  }
-
-  async function editLanguage(value: Language): Promise<void> {
-    if (value === language()) {
-      return;
-    }
-    const previous = language();
-    language.set(value);
-    saveError.set(null);
-    if (!(await persist({ language: value }))) {
-      language.set(previous);
-    }
-  }
-
-  async function editTheme(value: Theme): Promise<void> {
-    if (value === theme()) {
-      return;
-    }
-    const previous = theme();
-    theme.set(value);
-    saveError.set(null);
-    if (!(await persist({ theme: value }))) {
-      theme.set(previous);
-    }
-  }
-
-  function editProxyMode(value: ProxyMode): void {
-    if (value === proxyMode()) {
-      return;
-    }
-    proxyMode.set(value);
-    testChecks.set([]);
-    testError.set(null);
-    saveError.set(null);
-    if (value === "custom" && customUrl().trim() === "") {
-      return;
-    }
-    const patch: SettingsPatch = {
-      proxy:
-        value === "custom"
-          ? { mode: value, custom_url: customUrl().trim() }
-          : { mode: value },
-    };
-    void persist(patch);
-  }
-
-  async function runConnectivity(): Promise<void> {
-    if (testBusy()) {
-      return;
-    }
-    if (!(await saveCustomUrl())) {
-      return;
-    }
-    testBusy.set(true);
-    testError.set(null);
-    testChecks.set([]);
-    try {
-      testChecks.set(await api.testConnectivity());
-    } catch (error) {
-      testError.set(toAppError(error));
-    } finally {
-      testBusy.set(false);
-    }
-  }
-
-  async function loadDataDirectory(): Promise<void> {
-    dataDirLoading.set(true);
-    dataDirError.set(null);
-    try {
-      dataDir.set(await api.dataDirectory());
-    } catch (error) {
-      dataDirError.set(toAppError(error));
-    } finally {
-      dataDirLoading.set(false);
-    }
-  }
-
-  void loadDataDirectory();
+  const text = props.store.text;
+  const c = createSettingsController(props.store);
 
   return (
-    <View class="flex-1 bg-background">
-      <View class="gap-3 border-b border-border bg-card px-6 py-4">
-        <View class="flex-row items-center gap-3">
-          <View class="flex-1 gap-1">
-            <Text class="text-lg font-semibold text-foreground">{text("settings.title")}</Text>
-            <Text class="text-xs text-muted-foreground">{text("settings.subtitle")}</Text>
+    <Page>
+      <PageHeader title={text("settings.title")} subtitle={text("settings.subtitle")}>
+        <Label variant="caption" tone="muted" testID="settings-save-status">
+          {text(statusKeys[c.status()])}
+        </Label>
+      </PageHeader>
+
+      <If when={c.saveError()}>
+        {(message) => (
+          <View class="pb-3">
+            <Notices>
+              <Banner tone="danger" message={message()} testID="settings-save-error">
+                <IconButton
+                  icon="close"
+                  label={text("settings.dismiss")}
+                  onPress={c.dismissSaveError}
+                />
+              </Banner>
+            </Notices>
           </View>
-          <Text class="text-xs text-muted-foreground" testID="settings-save-status">
-            {statusText()}
-          </Text>
-        </View>
-        <If when={saveError()}>
-          {(message) => (
-            <Banner
-              tone="error"
-              message={message()}
-              actionLabel={text("settings.dismiss")}
-              onAction={() => saveError.set(null)}
-              testID="settings-save-error"
-            />
-          )}
-        </If>
-      </View>
+        )}
+      </If>
 
       <Scroll class="flex-1">
-        <View class="max-w-[720px] gap-4 p-6">
-          <View class={sectionClass}>
-            <SectionTitle icon="palette" label={text("settings.appearance.title")} />
-            <View class="flex-row items-center gap-3">
-              <Text class={rowLabelClass}>{text("settings.language")}</Text>
-              <Tabs class="flex-row gap-1">
-                <Each of={languages}>
-                  {(item) => (
-                    <Tab
-                      selected={item() === language()}
-                      onPress={() => void editLanguage(item())}
-                      class={tabClass}
-                      testID={`settings-language-${item()}`}
-                    >
-                      <Text class={tabTextClass}>{text(languageKeys[item()])}</Text>
-                    </Tab>
-                  )}
-                </Each>
-              </Tabs>
-            </View>
-            <View class="flex-row items-center gap-3">
-              <Text class={rowLabelClass}>{text("settings.theme")}</Text>
-              <Tabs class="flex-row gap-1">
-                <Each of={themes}>
-                  {(item) => (
-                    <Tab
-                      selected={item() === theme()}
-                      onPress={() => void editTheme(item())}
-                      class={tabClass}
-                      testID={`settings-theme-${item()}`}
-                    >
-                      <Text class={tabTextClass}>{text(themeKeys[item()])}</Text>
-                    </Tab>
-                  )}
-                </Each>
-              </Tabs>
-            </View>
-          </View>
+        <View class="max-w-[720px] gap-4 px-6 pb-6">
+          <Section icon="palette" title={text("settings.appearance.title")}>
+            <Field label={text("settings.language")}>
+              <Segmented
+                options={languages}
+                value={c.language()}
+                label={(option) => text(languageKeys[option])}
+                onChange={(option) => void c.setLanguage(option)}
+                testID="settings-language"
+              />
+            </Field>
+            <Field label={text("settings.theme")}>
+              <Segmented
+                options={themes}
+                value={c.theme()}
+                label={(option) => text(themeKeys[option])}
+                onChange={(option) => void c.setTheme(option)}
+                testID="settings-theme"
+              />
+            </Field>
+          </Section>
 
-          <View class={sectionClass}>
-            <SectionTitle icon="globe" label={text("settings.proxy.title")} />
-            <View class="flex-row items-center gap-3">
-              <Text class={rowLabelClass}>{text("settings.proxy.mode")}</Text>
-              <Tabs class="flex-row gap-1">
-                <Each of={proxyModes}>
-                  {(item) => (
-                    <Tab
-                      selected={item() === proxyMode()}
-                      onPress={() => editProxyMode(item())}
-                      class={tabClass}
-                      testID={`settings-proxy-${item()}`}
-                    >
-                      <Text class={tabTextClass}>{text(proxyModeKeys[item()])}</Text>
-                    </Tab>
-                  )}
-                </Each>
-              </Tabs>
-            </View>
-            <If when={proxyMode() === "custom"}>
+          <Section
+            icon="globe"
+            title={text("settings.proxy.title")}
+            hint={text("settings.proxy.hint")}
+          >
+            <Field label={text("settings.proxy.mode")}>
+              <Segmented
+                options={proxyModes}
+                value={c.proxyMode()}
+                label={(option) => text(proxyModeKeys[option])}
+                onChange={c.setProxyMode}
+                testID="settings-proxy"
+              />
+            </Field>
+            <If when={c.proxyMode() === "custom"}>
               {() => (
-                <View class="gap-2">
-                  <Text class="text-sm text-foreground">{text("settings.proxy.url")}</Text>
-                  <Input
-                    class="w-[420px] rounded-(--radius) border border-border bg-background px-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground"
-                    value={customUrl()}
-                    placeholder={text("settings.proxy.urlPlaceholder")}
-                    submitBehavior="submit"
-                    onChange={(event) => {
-                      customUrl.set(event.value);
-                      saveError.set(null);
-                    }}
-                    onBlur={() => void saveCustomUrl()}
-                    onSubmit={() => void saveCustomUrl()}
-                    testID="settings-proxy-url"
-                  />
-                  <Text class={sectionHintClass}>{text("settings.proxy.urlHint")}</Text>
-                </View>
+                <Field label={text("settings.proxy.url")}>
+                  <View class="flex-1 gap-1.5">
+                    <TextField
+                      class="w-[320px]"
+                      value={c.customUrl()}
+                      placeholder={text("settings.proxy.urlPlaceholder")}
+                      onChange={c.editCustomUrl}
+                      onBlur={() => void c.saveCustomUrl()}
+                      onSubmit={() => void c.saveCustomUrl()}
+                      testID="settings-proxy-url"
+                    />
+                    <Label variant="caption" tone="muted">
+                      {text("settings.proxy.urlHint")}
+                    </Label>
+                  </View>
+                </Field>
               )}
             </If>
             <View class="flex-row items-center gap-3">
-              <ActionButton
-                label={testBusy() ? text("settings.proxy.testing") : text("settings.proxy.test")}
-                variant="secondary"
-                disabled={testBusy()}
-                onPress={() => void runConnectivity()}
+              <Button
+                label={text("settings.proxy.test")}
+                icon="globe"
+                busy={c.testBusy()}
+                onPress={() => void c.testConnectivity()}
                 testID="settings-test-connectivity"
               />
-              <Text class={sectionHintClass}>{text("settings.proxy.testHint")}</Text>
+              <Each of={c.testChecks()} key={(check) => check.target}>
+                {(check) => (
+                  <View
+                    class="flex-row items-center gap-1"
+                    testID={`settings-connectivity-${check().target}`}
+                  >
+                    <Icon
+                      name={check().ok ? "circleCheck" : "error"}
+                      color={check().ok ? "success" : "destructive"}
+                    />
+                    <Label variant="caption" tone={check().ok ? "default" : "danger"}>
+                      {`${text(targetKeys[check().target])} ${
+                        check().ok
+                          ? text("settings.proxy.test.ok", { latency: check().latency_ms })
+                          : text("settings.proxy.test.fail")
+                      }`}
+                    </Label>
+                  </View>
+                )}
+              </Each>
             </View>
-            <If when={testError()}>
-              {(error) => (
-                <Text class="text-sm text-destructive" testID="settings-connectivity-error">
-                  {`${text("settings.proxy.test.error")}: ${errorText(error())}`}
-                </Text>
-              )}
-            </If>
-            <Each of={testChecks()}>
-              {(item) => (
-                <View
-                  class="flex-row items-center gap-3"
-                  testID={`settings-connectivity-${item().target}`}
-                >
-                  <Text class="w-[80px] text-sm text-foreground">
-                    {text(targetKeys[item().target])}
-                  </Text>
-                  <Text class={item().ok ? "text-sm text-foreground" : "text-sm text-destructive"}>
-                    {item().ok
-                      ? text("settings.proxy.test.ok", { latency: item().latency_ms })
-                      : `${text("settings.proxy.test.fail")}${item().error ? `: ${item().error}` : ""}`}
-                  </Text>
-                </View>
+            <Each of={c.testChecks().filter((check) => !check.ok && check.error !== null)}>
+              {(check) => (
+                <Label variant="caption" tone="danger" lines={2}>
+                  {`${text(targetKeys[check().target])}: ${check().error ?? ""}`}
+                </Label>
               )}
             </Each>
-          </View>
-
-          <View class={sectionClass}>
-            <View class="gap-1">
-              <SectionTitle icon="folder" label={text("settings.data.title")} />
-              <Text class={sectionHintClass}>{text("settings.data.hint")}</Text>
-            </View>
-            <If when={dataDirLoading()}>
-              {() => <Text class="text-sm text-muted-foreground">{text("common.loading")}</Text>}
-            </If>
-            <If when={dataDirError()}>
+            <If when={c.testError()}>
               {(error) => (
-                <View class="flex-row items-center gap-2">
-                  <Text class="flex-1 text-sm text-destructive">
-                    {`${text("settings.data.error")}: ${errorText(error())}`}
-                  </Text>
-                  <ActionButton
+                <Label variant="caption" tone="danger" testID="settings-connectivity-error">
+                  {`${text("settings.proxy.test.error")}: ${props.store.errorText(error())}`}
+                </Label>
+              )}
+            </If>
+          </Section>
+
+          <Section
+            icon="folder"
+            title={text("settings.data.title")}
+            hint={text("settings.data.hint")}
+          >
+            <If when={c.dataDir()}>
+              {(path) => (
+                <Label selectable testID="settings-data-directory">
+                  {path()}
+                </Label>
+              )}
+            </If>
+            <If when={c.dataDirError()}>
+              {(error) => (
+                <Banner
+                  tone="danger"
+                  message={`${text("settings.data.error")}: ${props.store.errorText(error())}`}
+                >
+                  <Button
                     label={text("common.retry")}
-                    variant="secondary"
-                    onPress={() => void loadDataDirectory()}
+                    variant="ghost"
+                    size="sm"
+                    onPress={() => void c.loadDataDirectory()}
                   />
-                </View>
+                </Banner>
               )}
             </If>
-            <If when={dataDir() !== null && dataDirError() === null}>
-              {() => (
-                <Text class="text-sm text-foreground" testID="settings-data-directory">
-                  {dataDir() ?? ""}
-                </Text>
-              )}
-            </If>
-          </View>
+          </Section>
         </View>
       </Scroll>
-    </View>
+    </Page>
   );
 }

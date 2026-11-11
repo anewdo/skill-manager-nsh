@@ -3,7 +3,7 @@ pub mod content_identity;
 pub mod display;
 pub mod error;
 pub mod http;
-pub mod installations;
+pub mod library;
 pub mod market;
 pub mod metadata;
 pub mod migrations;

@@ -6,10 +6,10 @@ use serde::Serialize;
 use crate::core::central_repo::CentralRepo;
 use crate::core::error::{AppError, Result};
 use crate::core::http;
-use crate::core::installations;
+use crate::core::library;
 use crate::core::market;
 use crate::core::model::{
-    Installation, OperationEvent, OperationKind, OperationLabel, Settings, SettingsPatch,
+    InstalledSkill, OperationEvent, OperationKind, OperationLabel, Settings, SettingsPatch,
     SkillSource, UpdateConflictPolicy,
 };
 use crate::core::operations::OperationQueue;
@@ -90,7 +90,7 @@ impl AppNative {
         .await
     }
 
-    /// Queues the installation of a remote Skill source and returns its operation ID.
+    /// Queues the skill of a remote Skill source and returns its operation ID.
     pub fn install_from_source(
         source: JsonValue,
         label: JsonValue,
@@ -109,13 +109,7 @@ impl AppNative {
         let id = operations()
             .enqueue_with_label(OperationKind::Install, Some(label), move |context| {
                 let proxy = state.store.settings()?.proxy;
-                installations::install_from_source(
-                    &state.repo,
-                    &state.store,
-                    source,
-                    &proxy,
-                    &context,
-                )
+                library::install_from_source(&state.repo, &state.store, source, &proxy, &context)
             })
             .map_err(js_error)?;
         to_json(id)
@@ -136,7 +130,7 @@ impl AppNative {
         operations().cancel(&id).map_err(js_error).and_then(to_json)
     }
 
-    /// Posts operation state, progress and installation-change events to TypeScript.
+    /// Posts operation state, progress and skill-change events to TypeScript.
     pub async fn subscribe_operations(
         on_event: Callback<JsonValue>,
     ) -> std::result::Result<(), JsError> {
@@ -198,47 +192,37 @@ impl AppNative {
     }
 
     /// Lists every Skill in the library.
-    pub async fn list_installations() -> std::result::Result<JsonValue, JsError> {
+    pub async fn list_skills() -> std::result::Result<JsonValue, JsError> {
         run_json(move || {
             let state = app_state()?;
-            let installations: Vec<Installation> =
-                installations::list_installations(&state.repo, &state.store)?;
-            Ok(installations)
+            let skills: Vec<InstalledSkill> = library::list_skills(&state.repo, &state.store)?;
+            Ok(skills)
         })
         .await
     }
 
-    /// Reads one installation together with its locally observed Skill state.
-    pub async fn installation_detail(id: String) -> std::result::Result<JsonValue, JsError> {
+    /// Reads one skill together with its locally observed Skill state.
+    pub async fn skill_detail(id: String) -> std::result::Result<JsonValue, JsError> {
         run_json(move || {
             let state = app_state()?;
-            installations::installation_detail(&state.repo, &state.store, &id)
+            library::skill_detail(&state.repo, &state.store, &id)
         })
         .await
     }
 
     /// Queues a rename and returns its operation ID.
-    pub fn rename_installation(
-        id: String,
-        new_name: String,
-    ) -> std::result::Result<JsonValue, JsError> {
+    pub fn rename_skill(id: String, new_name: String) -> std::result::Result<JsonValue, JsError> {
         let state = app_state().map_err(js_error)?;
         let operation = operations()
             .enqueue(OperationKind::Rename, move |context| {
-                installations::rename_installation(
-                    &state.repo,
-                    &state.store,
-                    &id,
-                    &new_name,
-                    &context,
-                )
+                library::rename_skill(&state.repo, &state.store, &id, &new_name, &context)
             })
             .map_err(js_error)?;
         to_json(operation)
     }
 
-    /// Queues a batch delete; modified installations require explicit confirmation.
-    pub fn delete_installations(
+    /// Queues a batch delete; modified skills require explicit confirmation.
+    pub fn delete_skills(
         ids: JsonValue,
         confirm_modified: bool,
     ) -> std::result::Result<JsonValue, JsError> {
@@ -246,32 +230,26 @@ impl AppNative {
         let state = app_state().map_err(js_error)?;
         let operation = operations()
             .enqueue(OperationKind::Delete, move |context| {
-                installations::delete_installations(
-                    &state.repo,
-                    &state.store,
-                    &ids,
-                    confirm_modified,
-                    &context,
-                )
+                library::delete_skills(&state.repo, &state.store, &ids, confirm_modified, &context)
             })
             .map_err(js_error)?;
         to_json(operation)
     }
 
-    /// Queues a manual update check for the given installations.
+    /// Queues a manual update check for the given skills.
     pub fn check_updates(ids: JsonValue) -> std::result::Result<JsonValue, JsError> {
         let ids = parse_id_list(ids).map_err(js_error)?;
         let state = app_state().map_err(js_error)?;
         let operation = operations()
             .enqueue(OperationKind::CheckUpdates, move |context| {
                 let proxy = state.store.settings()?.proxy;
-                installations::check_updates(&state.repo, &state.store, &ids, &proxy, &context)
+                library::check_updates(&state.repo, &state.store, &ids, &proxy, &context)
             })
             .map_err(js_error)?;
         to_json(operation)
     }
 
-    /// Queues an update for one installation and returns its operation ID.
+    /// Queues an update for one skill and returns its operation ID.
     pub fn apply_update(
         id: String,
         conflict_policy: String,
@@ -281,14 +259,7 @@ impl AppNative {
         let operation = operations()
             .enqueue(OperationKind::ApplyUpdate, move |context| {
                 let proxy = state.store.settings()?.proxy;
-                installations::apply_update(
-                    &state.repo,
-                    &state.store,
-                    &id,
-                    policy,
-                    &proxy,
-                    &context,
-                )
+                library::apply_update(&state.repo, &state.store, &id, policy, &proxy, &context)
             })
             .map_err(js_error)?;
         to_json(operation)

@@ -8,10 +8,10 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 use super::central_repo::CentralRepo;
 use super::error::{AppError, ErrorCode, Result};
 use super::migrations;
-use super::model::{Installation, LocalState, Settings, SkillSource, UpdateState};
+use super::model::{InstalledSkill, LocalState, Settings, SkillSource, UpdateState};
 
 const SETTINGS_KEY: &str = "app";
-const INSTALLATION_SELECT: &str = "
+const SKILL_SELECT: &str = "
     SELECT id, display_name, root_relpath, root_key,
            source_type, source_key, source_json, installed_revision, remote_revision,
            baseline_hash, current_hash, local_state, update_state, update_checked_at,
@@ -54,9 +54,9 @@ impl Store {
             .map_err(|error| AppError::internal(format!("database mutex is poisoned: {error}")))
     }
 
-    pub fn insert_installation(&self, installation: &Installation) -> Result<()> {
+    pub fn insert_skill(&self, skill: &InstalledSkill) -> Result<()> {
         let conn = self.conn()?;
-        insert_installation_on(&conn, installation)
+        insert_skill_on(&conn, skill)
     }
 
     pub fn update_local_state(
@@ -73,12 +73,12 @@ impl Store {
             params![current_hash, local_state.as_str(), updated_at, id],
         )?;
         if affected == 0 {
-            return Err(installation_not_found());
+            return Err(skill_not_found());
         }
         Ok(())
     }
 
-    pub fn update_installation_rename(
+    pub fn update_skill_rename(
         &self,
         id: &str,
         display_name: &str,
@@ -93,7 +93,7 @@ impl Store {
             params![display_name, root_relpath, root_key, updated_at, id],
         )?;
         if affected == 0 {
-            return Err(installation_not_found());
+            return Err(skill_not_found());
         }
         Ok(())
     }
@@ -120,12 +120,12 @@ impl Store {
             ],
         )?;
         if affected == 0 {
-            return Err(installation_not_found());
+            return Err(skill_not_found());
         }
         Ok(())
     }
 
-    pub fn update_installation_after_update(
+    pub fn update_skill_after_update(
         &self,
         id: &str,
         installed_revision: Option<&str>,
@@ -150,52 +150,48 @@ impl Store {
             ],
         )?;
         if affected == 0 {
-            return Err(installation_not_found());
+            return Err(skill_not_found());
         }
         Ok(())
     }
 
-    pub fn delete_installation_record(&self, id: &str) -> Result<()> {
+    pub fn delete_skill_record(&self, id: &str) -> Result<()> {
         let affected = self
             .conn()?
             .execute("DELETE FROM skills WHERE id = ?1", [id])?;
         if affected == 0 {
-            return Err(installation_not_found());
+            return Err(skill_not_found());
         }
         Ok(())
     }
 
-    pub fn installation(&self, id: &str) -> Result<Option<Installation>> {
+    pub fn skill(&self, id: &str) -> Result<Option<InstalledSkill>> {
         let conn = self.conn()?;
-        conn.query_row(
-            &format!("{INSTALLATION_SELECT} WHERE id = ?1"),
-            [id],
-            map_installation,
-        )
-        .optional()
-        .map_err(Into::into)
+        conn.query_row(&format!("{SKILL_SELECT} WHERE id = ?1"), [id], map_skill)
+            .optional()
+            .map_err(Into::into)
     }
 
-    pub fn installation_by_source(&self, source_key: &str) -> Result<Option<Installation>> {
+    pub fn skill_by_source(&self, source_key: &str) -> Result<Option<InstalledSkill>> {
         let conn = self.conn()?;
         conn.query_row(
-            &format!("{INSTALLATION_SELECT} WHERE source_key = ?1"),
+            &format!("{SKILL_SELECT} WHERE source_key = ?1"),
             [source_key],
-            map_installation,
+            map_skill,
         )
         .optional()
         .map_err(Into::into)
     }
 
-    pub fn list_installations(&self) -> Result<Vec<Installation>> {
+    pub fn list_skills(&self) -> Result<Vec<InstalledSkill>> {
         let conn = self.conn()?;
         let mut statement = conn.prepare(&format!(
-            "{INSTALLATION_SELECT} ORDER BY display_name COLLATE NOCASE, id"
+            "{SKILL_SELECT} ORDER BY display_name COLLATE NOCASE, id"
         ))?;
-        let installations = statement
-            .query_map([], map_installation)?
+        let skills = statement
+            .query_map([], map_skill)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(installations)
+        Ok(skills)
     }
 
     pub fn settings(&self) -> Result<Settings> {
@@ -223,8 +219,8 @@ impl Store {
     }
 }
 
-fn insert_installation_on(conn: &Connection, installation: &Installation) -> Result<()> {
-    let (source_type, source_key, source_json) = source_columns(installation.source.as_ref())?;
+fn insert_skill_on(conn: &Connection, skill: &InstalledSkill) -> Result<()> {
+    let (source_type, source_key, source_json) = source_columns(skill.source.as_ref())?;
     conn.execute(
         "INSERT INTO skills (
             id, display_name, root_relpath, root_key,
@@ -236,30 +232,30 @@ fn insert_installation_on(conn: &Connection, installation: &Installation) -> Res
             ?11, ?12, ?13, ?14, ?15, ?16, ?17
         )",
         params![
-            installation.id,
-            installation.display_name,
-            installation.root_relpath,
-            installation.root_key,
+            skill.id,
+            skill.display_name,
+            skill.root_relpath,
+            skill.root_key,
             source_type,
             source_key,
             source_json,
-            installation.installed_revision,
-            installation.remote_revision,
-            installation.baseline_hash,
-            installation.current_hash,
-            installation.local_state.as_str(),
-            installation.update_state.as_str(),
-            installation.update_checked_at,
-            installation.created_at,
-            installation.updated_at,
-            installation.last_error,
+            skill.installed_revision,
+            skill.remote_revision,
+            skill.baseline_hash,
+            skill.current_hash,
+            skill.local_state.as_str(),
+            skill.update_state.as_str(),
+            skill.update_checked_at,
+            skill.created_at,
+            skill.updated_at,
+            skill.last_error,
         ],
     )?;
     Ok(())
 }
 
-fn installation_not_found() -> AppError {
-    AppError::new(ErrorCode::NotFound, "installation was not found")
+fn skill_not_found() -> AppError {
+    AppError::new(ErrorCode::NotFound, "skill was not found")
 }
 
 fn source_columns(
@@ -274,7 +270,7 @@ fn source_columns(
     })
 }
 
-fn map_installation(row: &Row<'_>) -> rusqlite::Result<Installation> {
+fn map_skill(row: &Row<'_>) -> rusqlite::Result<InstalledSkill> {
     let source_type: Option<String> = row.get(4)?;
     let source_key: Option<String> = row.get(5)?;
     let source_json: Option<String> = row.get(6)?;
@@ -288,7 +284,7 @@ fn map_installation(row: &Row<'_>) -> rusqlite::Result<Installation> {
         _ => None,
     };
 
-    Ok(Installation {
+    Ok(InstalledSkill {
         id: row.get(0)?,
         display_name: row.get(1)?,
         root_relpath: row.get(2)?,
@@ -326,8 +322,8 @@ mod tests {
     use crate::core::error::ErrorCode;
     use crate::core::model::{SourceType, Theme};
 
-    fn installation(id: &str, root_key: &str, source_key: Option<&str>) -> Installation {
-        Installation {
+    fn skill(id: &str, root_key: &str, source_key: Option<&str>) -> InstalledSkill {
+        InstalledSkill {
             id: id.to_owned(),
             display_name: id.to_owned(),
             root_relpath: root_key.to_owned(),
@@ -355,34 +351,34 @@ mod tests {
     }
 
     #[test]
-    fn installation_round_trip_preserves_lineage_and_state() {
+    fn skill_round_trip_preserves_lineage_and_state() {
         let store = Store::in_memory().unwrap();
-        let expected = installation("one", "demo", Some("github:owner/repo:skills/demo"));
-        store.insert_installation(&expected).unwrap();
+        let expected = skill("one", "demo", Some("github:owner/repo:skills/demo"));
+        store.insert_skill(&expected).unwrap();
 
-        assert_eq!(store.installation("one").unwrap(), Some(expected.clone()));
-        assert_eq!(store.list_installations().unwrap(), [expected]);
+        assert_eq!(store.skill("one").unwrap(), Some(expected.clone()));
+        assert_eq!(store.list_skills().unwrap(), [expected]);
     }
 
     #[test]
     fn root_and_source_are_unique_across_the_library() {
         let store = Store::in_memory().unwrap();
         store
-            .insert_installation(&installation("one", "demo", Some("source-one")))
+            .insert_skill(&skill("one", "demo", Some("source-one")))
             .unwrap();
 
-        let duplicate_root = installation("two", "demo", Some("source-two"));
-        assert!(store.insert_installation(&duplicate_root).is_err());
-        let duplicate_source = installation("three", "other", Some("source-one"));
-        assert!(store.insert_installation(&duplicate_source).is_err());
+        let duplicate_root = skill("two", "demo", Some("source-two"));
+        assert!(store.insert_skill(&duplicate_root).is_err());
+        let duplicate_source = skill("three", "other", Some("source-one"));
+        assert!(store.insert_skill(&duplicate_source).is_err());
 
-        let local_duplicate_root = installation("four", "demo", None);
-        assert!(store.insert_installation(&local_duplicate_root).is_err());
-        let local = installation("five", "local-demo", None);
-        store.insert_installation(&local).unwrap();
-        let another_local = installation("six", "local-other", None);
-        store.insert_installation(&another_local).unwrap();
-        assert_eq!(store.installation("five").unwrap().unwrap().source, None);
+        let local_duplicate_root = skill("four", "demo", None);
+        assert!(store.insert_skill(&local_duplicate_root).is_err());
+        let local = skill("five", "local-demo", None);
+        store.insert_skill(&local).unwrap();
+        let another_local = skill("six", "local-other", None);
+        store.insert_skill(&another_local).unwrap();
+        assert_eq!(store.skill("five").unwrap().unwrap().source, None);
     }
 
     #[test]
@@ -426,22 +422,22 @@ mod tests {
     #[test]
     fn local_state_and_rename_updates_leave_lineage_untouched() {
         let store = Store::in_memory().unwrap();
-        let original = installation("one", "demo", Some("source-one"));
-        store.insert_installation(&original).unwrap();
+        let original = skill("one", "demo", Some("source-one"));
+        store.insert_skill(&original).unwrap();
 
         store
             .update_local_state("one", None, LocalState::Missing, 300)
             .unwrap();
-        let current = store.installation("one").unwrap().unwrap();
+        let current = store.skill("one").unwrap().unwrap();
         assert_eq!(current.local_state, LocalState::Missing);
         assert_eq!(current.current_hash, None);
         assert_eq!(current.baseline_hash, original.baseline_hash);
         assert_eq!(current.updated_at, 300);
 
         store
-            .update_installation_rename("one", "renamed", "scope/renamed", "scope/renamed", 400)
+            .update_skill_rename("one", "renamed", "scope/renamed", "scope/renamed", 400)
             .unwrap();
-        let current = store.installation("one").unwrap().unwrap();
+        let current = store.skill("one").unwrap().unwrap();
         assert_eq!(current.display_name, "renamed");
         assert_eq!(current.root_relpath, "scope/renamed");
         assert_eq!(current.root_key, "scope/renamed");
@@ -453,13 +449,13 @@ mod tests {
     #[test]
     fn update_checks_and_applied_updates_persist_their_state() {
         let store = Store::in_memory().unwrap();
-        let original = installation("one", "demo", Some("source-one"));
-        store.insert_installation(&original).unwrap();
+        let original = skill("one", "demo", Some("source-one"));
+        store.insert_skill(&original).unwrap();
 
         store
             .update_update_check("one", Some("remote-rev"), UpdateState::Available, 500, None)
             .unwrap();
-        let checked = store.installation("one").unwrap().unwrap();
+        let checked = store.skill("one").unwrap().unwrap();
         assert_eq!(checked.remote_revision.as_deref(), Some("remote-rev"));
         assert_eq!(checked.update_state, UpdateState::Available);
         assert_eq!(checked.update_checked_at, Some(500));
@@ -475,20 +471,14 @@ mod tests {
                 Some("offline"),
             )
             .unwrap();
-        let failed = store.installation("one").unwrap().unwrap();
+        let failed = store.skill("one").unwrap().unwrap();
         assert_eq!(failed.update_state, UpdateState::CheckFailed);
         assert_eq!(failed.last_error.as_deref(), Some("offline"));
 
         store
-            .update_installation_after_update(
-                "one",
-                Some("remote-rev"),
-                Some("remote-rev"),
-                "next",
-                700,
-            )
+            .update_skill_after_update("one", Some("remote-rev"), Some("remote-rev"), "next", 700)
             .unwrap();
-        let updated = store.installation("one").unwrap().unwrap();
+        let updated = store.skill("one").unwrap().unwrap();
         assert_eq!(updated.installed_revision.as_deref(), Some("remote-rev"));
         assert_eq!(updated.remote_revision.as_deref(), Some("remote-rev"));
         assert_eq!(updated.baseline_hash.as_deref(), Some("next"));
@@ -511,16 +501,13 @@ mod tests {
         );
         assert_eq!(
             store
-                .update_installation_rename("missing", "name", "name", "name", 1)
+                .update_skill_rename("missing", "name", "name", "name", 1)
                 .unwrap_err()
                 .code,
             ErrorCode::NotFound
         );
         assert_eq!(
-            store
-                .delete_installation_record("missing")
-                .unwrap_err()
-                .code,
+            store.delete_skill_record("missing").unwrap_err().code,
             ErrorCode::NotFound
         );
         assert_eq!(

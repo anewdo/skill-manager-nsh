@@ -1,0 +1,190 @@
+import { cleanup, computed, signal } from "nsh";
+import * as api from "../../lib/api";
+import { toAppError } from "../../lib/errors";
+import type { AppError, LeaderboardKind, MarketplaceSkill, SkillPreview } from "../../lib/types";
+import type { AppStore } from "../../store";
+import {
+  SEARCH_LIMIT,
+  filterBySource,
+  installedLineages,
+  type EntryStatus,
+  type SourceFilter,
+} from "./model";
+
+const SEARCH_DELAY_MS = 350;
+
+export type MarketplaceController = ReturnType<typeof createMarketplaceController>;
+
+/** The marketplace page's state: the ranking or search shown, and the preview open. */
+export function createMarketplaceController(store: AppStore) {
+  const kind = signal<LeaderboardKind>("all_time");
+  const query = signal("");
+  const appliedQuery = signal("");
+  const sourceFilter = signal<SourceFilter>("all");
+  const entries = signal<MarketplaceSkill[] | null>(null);
+  const loading = signal(false);
+  const loadError = signal<AppError | null>(null);
+
+  const previewEntry = signal<MarketplaceSkill | null>(null);
+  const previewOpen = signal(false);
+  const preview = signal<SkillPreview | null>(null);
+  const previewLoading = signal(false);
+  const previewError = signal<AppError | null>(null);
+
+  const installed = computed(() => installedLineages(store.skills()));
+  const filtered = computed(() => filterBySource(entries() ?? [], sourceFilter()));
+  const searching = computed(() => appliedQuery() !== "");
+
+  let loadSequence = 0;
+  let previewSequence = 0;
+  let searchTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function stopSearchTimer(): void {
+    if (searchTimer !== null) {
+      clearTimeout(searchTimer);
+      searchTimer = null;
+    }
+  }
+
+  async function load(force: boolean): Promise<void> {
+    const request = ++loadSequence;
+    loading.set(true);
+    loadError.set(null);
+    const term = appliedQuery();
+    try {
+      const result =
+        term !== ""
+          ? await api.marketSearch(term, SEARCH_LIMIT, force)
+          : await api.marketLeaderboard(kind(), force);
+      if (request === loadSequence) {
+        entries.set(result);
+      }
+    } catch (error) {
+      if (request === loadSequence) {
+        loadError.set(toAppError(error));
+      }
+    } finally {
+      if (request === loadSequence) {
+        loading.set(false);
+      }
+    }
+  }
+
+  function applyQuery(term: string): void {
+    stopSearchTimer();
+    if (term === appliedQuery()) {
+      return;
+    }
+    appliedQuery.set(term);
+    void load(false);
+  }
+
+  /** The search field changed: searches once typing pauses, at once when emptied. */
+  function editQuery(value: string): void {
+    query.set(value);
+    stopSearchTimer();
+    if (value.trim() === "") {
+      applyQuery("");
+      return;
+    }
+    searchTimer = setTimeout(() => applyQuery(query().trim()), SEARCH_DELAY_MS);
+  }
+
+  function submitQuery(): void {
+    applyQuery(query().trim());
+  }
+
+  function selectKind(next: LeaderboardKind): void {
+    stopSearchTimer();
+    kind.set(next);
+    query.set("");
+    appliedQuery.set("");
+    entries.set(null);
+    void load(false);
+  }
+
+  function refresh(): void {
+    void load(true);
+  }
+
+  function status(entry: MarketplaceSkill): EntryStatus {
+    const tracker = store.installs().find((item) => item.sourceKey === entry.lineage.source_key);
+    if (tracker !== undefined) {
+      return store.operation(tracker.operationId)?.state === "running" ? "installing" : "queued";
+    }
+    return installed().has(entry.lineage.source_key) ? "installed" : "available";
+  }
+
+  function install(entry: MarketplaceSkill): void {
+    if (status(entry) === "available") {
+      store.startInstall(entry.lineage, { name: entry.name, source: entry.source });
+    }
+  }
+
+  /** Opens the preview of an entry and downloads it: the only place a preview is fetched. */
+  async function openPreview(entry: MarketplaceSkill): Promise<void> {
+    previewEntry.set(entry);
+    previewOpen.set(true);
+    preview.set(null);
+    previewError.set(null);
+    const request = ++previewSequence;
+    previewLoading.set(true);
+    try {
+      const result = await api.marketPreview(entry.lineage);
+      if (request === previewSequence) {
+        preview.set(result);
+      }
+    } catch (error) {
+      if (request === previewSequence) {
+        previewError.set(toAppError(error));
+      }
+    } finally {
+      if (request === previewSequence) {
+        previewLoading.set(false);
+      }
+    }
+  }
+
+  function closePreview(): void {
+    previewSequence += 1;
+    previewOpen.set(false);
+  }
+
+  /** Drops what the preview showed, once it is gone. */
+  function previewClosed(): void {
+    if (!previewOpen()) {
+      previewEntry.set(null);
+      preview.set(null);
+      previewError.set(null);
+      previewLoading.set(false);
+    }
+  }
+
+  cleanup(stopSearchTimer);
+  void load(false);
+
+  return {
+    kind,
+    query,
+    sourceFilter,
+    entries,
+    filtered,
+    loading,
+    loadError,
+    searching,
+    editQuery,
+    submitQuery,
+    selectKind,
+    refresh,
+    status,
+    install,
+    previewEntry,
+    previewOpen,
+    preview,
+    previewLoading,
+    previewError,
+    openPreview,
+    closePreview,
+    previewClosed,
+  };
+}

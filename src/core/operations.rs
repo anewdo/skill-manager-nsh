@@ -260,16 +260,12 @@ impl OperationContext {
         Ok(())
     }
 
-    pub fn installations_changed(&self) {
+    pub fn library_changed(&self) {
         let state = lock_state(&self.shared);
         let Some(snapshot) = state.snapshots.get(&self.id).cloned() else {
             return;
         };
-        emit(
-            &self.shared,
-            OperationEventKind::InstallationsChanged,
-            snapshot,
-        );
+        emit(&self.shared, OperationEventKind::LibraryChanged, snapshot);
     }
 }
 
@@ -567,12 +563,12 @@ mod tests {
     }
 
     #[test]
-    fn installation_changes_have_a_distinct_event() {
+    fn skill_changes_have_a_distinct_event() {
         let queue = OperationQueue::new();
         let mut events = queue.subscribe();
         let id = queue
             .enqueue_value(OperationKind::Install, |context| {
-                context.installations_changed();
+                context.library_changed();
                 Ok(Value::Null)
             })
             .unwrap();
@@ -580,7 +576,7 @@ mod tests {
 
         let mut found = false;
         while let Ok(event) = events.try_recv() {
-            found |= event.kind == OperationEventKind::InstallationsChanged;
+            found |= event.kind == OperationEventKind::LibraryChanged;
         }
         assert!(found);
     }

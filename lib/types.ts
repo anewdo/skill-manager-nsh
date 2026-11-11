@@ -68,7 +68,7 @@ export interface OperationSnapshot {
 export type OperationEventKind =
   | "operation-state"
   | "operation-progress"
-  | "installations-changed"
+  | "library-changed"
   | "operations-resync";
 
 export interface OperationEvent {
@@ -86,7 +86,7 @@ export interface SkillSource {
   digest?: string;
 }
 
-export interface Installation {
+export interface InstalledSkill {
   id: string;
   display_name: string;
   root_relpath: string;
@@ -105,7 +105,7 @@ export interface Installation {
 }
 
 /** A finished marketplace install, plus a same-named local copy the app left untouched. */
-export interface InstallResult extends Installation {
+export interface InstallResult extends InstalledSkill {
   unmanaged_copy?: string | null;
 }
 
@@ -126,8 +126,8 @@ export interface LocalSkillInfo {
   inspected_at: number;
 }
 
-export interface InstallationDetail {
-  installation: Installation;
+export interface SkillDetail {
+  skill: InstalledSkill;
   local: LocalSkillInfo;
 }
 

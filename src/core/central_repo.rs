@@ -61,7 +61,7 @@ impl CentralRepo {
         Ok(())
     }
 
-    pub fn installation_path(&self, relative: &str) -> Result<PathBuf> {
+    pub fn skill_path(&self, relative: &str) -> Result<PathBuf> {
         resolve_within(&self.skills_root(), relative)
     }
 

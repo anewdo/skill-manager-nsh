@@ -1,35 +1,53 @@
 import { expect, open, test } from "nsh/test";
 
-test("opens the skill library from the sidebar and switches views", async () => {
-  const app = await open("./App.tsx", { width: 1280, height: 800, platform: "windows" });
-  await app.waitFor("id:nav-library");
-  await app.press("id:nav-library");
-  await app.waitFor("id:myskills-view-list");
-  expect(app.count("id:myskills-view-list")).toBe(1);
-  expect(app.count("id:myskills-view-card")).toBe(1);
+const windowOptions = { width: 1280, height: 800, platform: "windows" } as const;
 
-  await app.press("id:myskills-view-card");
-  await app.press("id:myskills-view-list");
-  expect(app.texts().length).toBeGreaterThan(0);
+test("starts on the skill library and switches between its views", async () => {
+  const app = await open("./App.tsx", windowOptions);
+  await app.waitFor("id:page-library");
+  expect(app.shows("id:library-search")).toBe(true);
+  expect(app.shows("id:marketplace-search")).toBe(false);
 
-  await app.press("id:nav-marketplace");
-  await app.waitFor("id:nav-library");
+  await app.press("id:library-view-card");
+  await app.press("id:library-view-list");
+  expect(app.count("id:library-view-list")).toBe(1);
 });
 
-test("opens the settings page from the sidebar", async () => {
-  const app = await open("./App.tsx", { width: 1280, height: 800, platform: "windows" });
+test("shows one page at a time", async () => {
+  const app = await open("./App.tsx", windowOptions);
+  await app.waitFor("id:nav-marketplace");
+  await app.press("id:nav-marketplace");
+  await app.waitFor("id:marketplace-search");
+  expect(app.shows("id:library-search")).toBe(false);
+
+  await app.press("id:nav-library");
+  expect(app.shows("id:library-search")).toBe(true);
+  expect(app.shows("id:marketplace-search")).toBe(false);
+});
+
+test("offers the settings that exist and the proxy address only for a custom proxy", async () => {
+  const app = await open("./App.tsx", windowOptions);
   await app.waitFor("id:nav-settings");
   await app.press("id:nav-settings");
   await app.waitFor("id:settings-save-status");
 
-  expect(app.count("id:settings-language-en")).toBe(1);
-  expect(app.count("id:settings-theme-dark")).toBe(1);
-  expect(app.count("id:settings-proxy-custom")).toBe(1);
-  expect(app.count("id:settings-test-connectivity")).toBe(1);
+  for (const id of [
+    "settings-language-zh_cn",
+    "settings-language-en",
+    "settings-theme-system",
+    "settings-theme-light",
+    "settings-theme-dark",
+    "settings-proxy-system",
+    "settings-proxy-none",
+    "settings-proxy-custom",
+    "settings-test-connectivity",
+  ]) {
+    expect(app.count(`id:${id}`)).toBe(1);
+  }
 
+  // Tests run on the real data directory: only press what leaves the saved settings as they are.
   await app.press("id:settings-proxy-system");
   expect(app.shows("id:settings-proxy-url")).toBe(false);
-
   await app.press("id:settings-proxy-custom");
   await app.waitFor("id:settings-proxy-url");
 });

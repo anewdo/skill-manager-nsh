@@ -137,7 +137,7 @@ pub struct OperationSnapshot {
 pub enum OperationEventKind {
     OperationState,
     OperationProgress,
-    InstallationsChanged,
+    LibraryChanged,
     OperationsResync,
 }
 
@@ -164,7 +164,7 @@ pub struct SkillSource {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Installation {
+pub struct InstalledSkill {
     pub id: String,
     pub display_name: String,
     pub root_relpath: String,
@@ -196,8 +196,8 @@ pub struct LocalSkillInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct InstallationDetail {
-    pub installation: Installation,
+pub struct SkillDetail {
+    pub skill: InstalledSkill,
     pub local: LocalSkillInfo,
 }
 

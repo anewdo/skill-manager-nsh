@@ -46,11 +46,11 @@ export function describeError(error: AppError, t: Translate): string {
   return `${t(key)}: ${error.message}`;
 }
 
-/** The installation a lineage conflict points at, when the backend named one. */
-export function conflictInstallationId(error: AppError): string | null {
+/** The Installed Skill a lineage conflict points at, when the backend named one. */
+export function conflictSkillId(error: AppError): string | null {
   if (error.code !== "CONFLICT" || typeof error.details !== "object" || error.details === null) {
     return null;
   }
-  const id = (error.details as Record<string, unknown>).installationId;
+  const id = (error.details as Record<string, unknown>).skillId;
   return typeof id === "string" ? id : null;
 }

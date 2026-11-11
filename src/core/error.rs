@@ -124,12 +124,12 @@ mod tests {
     fn serializes_structured_error_without_frontend_string_parsing() {
         let error = AppError::new(ErrorCode::Conflict, "already installed")
             .retryable(false)
-            .with_details(serde_json::json!({ "installationId": "abc" }));
+            .with_details(serde_json::json!({ "skillId": "abc" }));
         let value = serde_json::to_value(error).unwrap();
 
         assert_eq!(value["code"], "CONFLICT");
         assert_eq!(value["message"], "already installed");
         assert_eq!(value["retryable"], false);
-        assert_eq!(value["details"]["installationId"], "abc");
+        assert_eq!(value["details"]["skillId"], "abc");
     }
 }

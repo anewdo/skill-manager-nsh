@@ -137,24 +137,24 @@ fn local_preview(
     repo: &CentralRepo,
     source: &SkillSource,
 ) -> Result<Option<SkillPreview>> {
-    let Some(installation) = store.installation_by_source(&source.source_key)? else {
+    let Some(skill) = store.skill_by_source(&source.source_key)? else {
         return Ok(None);
     };
-    let root = repo.installation_path(&installation.root_relpath)?;
+    let root = repo.skill_path(&skill.root_relpath)?;
     let skill_md = read_skill_md(&root)?;
     let metadata = parse_skill_md_content(&skill_md, &root.join("SKILL.md").display().to_string())?;
-    let digest = installation
+    let digest = skill
         .source
         .as_ref()
         .and_then(|installed| installed.digest.clone());
-    let stored_source = installation.source.unwrap_or_else(|| source.clone());
+    let stored_source = skill.source.unwrap_or_else(|| source.clone());
     Ok(Some(SkillPreview {
         source: stored_source,
-        relative_root: installation.root_relpath,
+        relative_root: skill.root_relpath,
         name: metadata.name,
         description: metadata.description,
         skill_md,
-        revision: installation.installed_revision,
+        revision: skill.installed_revision,
         digest,
     }))
 }
@@ -322,7 +322,7 @@ mod tests {
 
     use std::cell::Cell;
 
-    use crate::core::model::{Installation, LocalState, UpdateState};
+    use crate::core::model::{InstalledSkill, LocalState, UpdateState};
 
     fn skill_source(name: &str) -> SkillSource {
         skills_sh::marketplace_source("owner/repo", name).unwrap()
@@ -454,7 +454,7 @@ mod tests {
         let source = skill_source("demo");
         let now = 1;
         store
-            .insert_installation(&Installation {
+            .insert_skill(&InstalledSkill {
                 id: "one".to_string(),
                 display_name: "demo".to_string(),
                 root_relpath: "demo".to_string(),

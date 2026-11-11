@@ -70,7 +70,7 @@ fn validate_component(name: &str) -> Result<()> {
         });
     if invalid {
         return Err(AppError::invalid_input(format!(
-            "invalid installation name: {name:?}"
+            "invalid skill name: {name:?}"
         )));
     }
 
@@ -81,7 +81,7 @@ fn validate_component(name: &str) -> Result<()> {
         .to_ascii_uppercase();
     if WINDOWS_RESERVED_BASENAMES.contains(&basename.as_str()) {
         return Err(AppError::invalid_input(format!(
-            "installation name is reserved by Windows: {name}"
+            "skill name is reserved by Windows: {name}"
         )));
     }
     Ok(())

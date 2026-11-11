@@ -3,8 +3,8 @@ import type {
   CacheClearReport,
   ConnectivityCheck,
   DisplayWorkArea,
-  Installation,
-  InstallationDetail,
+  InstalledSkill,
+  SkillDetail,
   LeaderboardKind,
   MarketplaceSkill,
   OperationEvent,
@@ -33,10 +33,10 @@ interface NativeModules {
     clearCache(): Promise<unknown>;
     testConnectivity(): Promise<unknown>;
     dataDirectory(): Promise<unknown>;
-    listInstallations(): Promise<unknown>;
-    installationDetail(id: string): Promise<unknown>;
-    renameInstallation(id: string, newName: string): unknown;
-    deleteInstallations(ids: unknown, confirmModified: boolean): unknown;
+    listSkills(): Promise<unknown>;
+    skillDetail(id: string): Promise<unknown>;
+    renameSkill(id: string, newName: string): unknown;
+    deleteSkills(ids: unknown, confirmModified: boolean): unknown;
     checkUpdates(ids: unknown): unknown;
     applyUpdate(id: string, conflictPolicy: string): unknown;
   };
@@ -116,20 +116,20 @@ export async function dataDirectory(): Promise<string> {
   return await AppNative.dataDirectory() as string;
 }
 
-export async function listInstallations(): Promise<Installation[]> {
-  return await AppNative.listInstallations() as Installation[];
+export async function listSkills(): Promise<InstalledSkill[]> {
+  return await AppNative.listSkills() as InstalledSkill[];
 }
 
-export async function installationDetail(id: string): Promise<InstallationDetail> {
-  return await AppNative.installationDetail(id) as InstallationDetail;
+export async function skillDetail(id: string): Promise<SkillDetail> {
+  return await AppNative.skillDetail(id) as SkillDetail;
 }
 
-export function renameInstallation(id: string, newName: string): string {
-  return AppNative.renameInstallation(id, newName) as string;
+export function renameSkill(id: string, newName: string): string {
+  return AppNative.renameSkill(id, newName) as string;
 }
 
-export function deleteInstallations(ids: string[], confirmModified = false): string {
-  return AppNative.deleteInstallations(ids, confirmModified) as string;
+export function deleteSkills(ids: string[], confirmModified = false): string {
+  return AppNative.deleteSkills(ids, confirmModified) as string;
 }
 
 export function checkUpdates(ids: string[]): string {

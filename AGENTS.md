@@ -14,17 +14,20 @@
 ## 项目结构
 
 ```text
-App.tsx / App.test.tsx     # nsh UI 入口与测试
-store.ts                   # 应用状态与操作跟踪
-lib/                       # api.ts（原生 API 封装）、types.ts（前端 DTO）、errors.ts（错误映射）
+App.tsx / App.test.tsx     # nsh UI 入口（外壳、页面保活）与测试
+theme.json                 # 设计令牌：Light / Dark 两套颜色与圆角，nsh.json 的 "theme" 指向它
+store/                     # index.ts（应用状态与操作跟踪）、downloads.ts（下载队列）、toasts.ts
+shell/                     # 侧边栏导航与全局任务指示
+lib/                       # api.ts（原生 API 封装）、types.ts（前端 DTO）、errors.ts、format.ts、operation-text.ts
 i18n/                      # zh_CN.ts / en.ts 文案表与 index.ts（translate、MessageKey）
-components/                # 通用 UI 组件
-pages/                     # 市场、技能库、设置页面
+components/ui/             # 基础组件（按钮、输入、分段筛选、对话框、列表行、卡片、空状态、徽标、Toast）
+components/icon.tsx        # 图标集，规范见 docs/icon-usage.md
+pages/<page>/              # 技能库、市场、设置：<Page>.tsx（视图）、controller.ts（状态与动作）、model.ts（纯函数）、components/
 nsh.json                   # mixed 工程配置，rust = "."
 Cargo.toml                 # Rust crate 配置
 src/lib.rs                 # native_module 注册；无 src/main.rs
 src/api/mod.rs             # AppNative、JsError、blocking、Callback
-src/core/                  # 模型、Store、路径、队列、安装等核心逻辑
+src/core/                  # 模型、Store、路径、队列、技能库（library.rs）等核心逻辑
 src/core/sources/          # skills.sh、GitHub、well-known、预览与下载
 .nsh/types/                # nsh 自动生成的声明
 docs/plans/                # 已确认的产品与实施计划；当前路线图为 2026-11-11-roadmap.md
@@ -44,6 +47,16 @@ docs/todo/                 # 后续工作安排
 - UI 使用 nsh 组件和 `signal` 响应式模型，不套用 React hooks 或浏览器全局对象。
 - 涉及 UI 的改动必须在 nsh debug 中实际操作黄金路径和边界情况；类型检查和模板测试不能代替功能验收。
 
+## UI 约定
+
+- 颜色、圆角只来自 `theme.json` 的令牌。页面和外壳不写具体色值，也不写 `text-*` 字号与颜色类：文字用 `Label` 的 `variant` / `tone`，其余用 `components/ui` 的组件；页面里的 class 只负责布局（`flex-*`、`gap-*`、宽度、内边距）。
+- 新的视觉样式先加到 `components/ui`，再在页面使用。直接使用 `nsh/base` 的无样式组件只应出现在 `components/ui` 和 `shell/`。
+- 页面首次打开后保持挂载（`App.tsx` 的 `PageSlot`），切页只切换显示。页面状态放在各自的 `controller.ts`，共享状态放在 `store/`。
+- 长列表用 `nsh` 的 `List`（虚拟化、回收行）。行内状态放在数据或以 id 为键的集合里，不放在行内创建的 signal 中。
+- 把 signal 的 `set` 作为回调传给组件时包一层箭头函数（`(v) => s.set(v)`）；直接传 `s.set` 会在调用时报 `not a live signal`。
+- 对话框统一用 `Modal`，操作结果统一用 `store.notify` 的 Toast，进行中的操作统一显示在侧边栏底部的任务指示里。
+- `nsh test` 的无界面运行会读写真实的 `~/.skills-manager-nsh`。常驻测试只做不改变已保存设置和技能库的操作；会安装、删除或改设置的实机验收脚本放在 `temp/`，用完删除。
+
 ## 核心业务约束
 
 - 只使用独立的 `~/.skills-manager-nsh/`，不得读取或修改原项目的 `~/.skills-manager` 数据
@@ -54,7 +67,7 @@ docs/todo/                 # 后续工作安排
 - 同 source lineage 走更新；同内容不同来源复用安装；同名不同内容使用数字后缀（`skill-2`、`skill-3`）
 - Deployment 记录是历史意图而非所有权证明：移除或覆盖 Deploy Target 中的任何内容前，必须用 `symlink_metadata` 确认磁盘现状与记录一致
 - 不得静默覆盖本地修改。目录 rename 后进入不可取消提交边界，数据库失败必须恢复文件系统状态
-- 仅在真实提交后发送安装变更事件；UI 和设置页只展示已经实现的能力
+- 仅在真实提交后发送技能库变更事件（`library-changed`）；UI 和设置页只展示已经实现的能力
 
 ## 验证与文档
 

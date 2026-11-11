@@ -2,15 +2,19 @@ import { Image, token } from "nsh";
 
 /**
  * The app's icon set. nsh ships no icons, so every icon is embedded here as
- * an SVG data URI: path data from lucide-static v1.70.0 (ISC License).
- * `Icon` draws one through `Image` and tints it with a theme token, so icons
+ * the body of an SVG: path data from lucide-static v1.70.0 (ISC License).
+ * `Icon` draws one through `Image` in the color of a theme token, so icons
  * follow the light and dark themes without extra files.
+ *
+ * The color is written into the SVG instead of set as the image's
+ * `tintColor`: on Windows (nsh 0.4.0) a tinted image inside a dialog that
+ * fades out fails the frame with Direct2D error 0x8899001E.
  */
 
-const svg = (body: string): string =>
-  `data:image/svg+xml,${encodeURIComponent(
-    `<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='#000000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>${body}</svg>`,
-  )}`;
+/** Marks where an icon is filled; replaced by the icon's color like its stroke. */
+const INK = "#000000";
+
+const svg = (body: string): string => body;
 
 const iconSources = {
   store: svg(
@@ -110,6 +114,19 @@ const iconSources = {
       `<path d="M12 16v-4"/>` +
       `<path d="M12 8h.01"/>`,
   ),
+  minus: svg(`<path d="M5 12h14"/>`),
+  circleCheck: svg(`<circle cx="12" cy="12" r="10"/>` + `<path d="m16 9-5.5 5.5L8 12"/>`),
+  package: svg(
+    `<path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/>` +
+      `<path d="M12 22V12"/>` +
+      `<path d="m7.5 4.27 9 5.15"/>`,
+  ),
+  searchX: svg(
+    `<path d="m13.5 8.5-5 5"/>` +
+      `<path d="m8.5 8.5 5 5"/>` +
+      `<circle cx="11" cy="11" r="8"/>` +
+      `<path d="m21 21-4.3-4.3"/>`,
+  ),
 };
 
 export type IconName = keyof typeof iconSources;
@@ -124,29 +141,45 @@ export type IconColor =
   | "accent-foreground"
   | "card-foreground"
   | "popover-foreground"
-  | "destructive";
+  | "destructive"
+  | "success"
+  | "warning"
+  | "info";
 
 export interface IconProps {
   name: IconName;
   /** Its drawn size in points, default 16. */
   size?: number;
-  /** The theme token tinting it, default `muted-foreground`. */
+  /** The theme token it is drawn in, default `muted-foreground`. */
   color?: IconColor;
   class?: string;
   accessibilityLabel?: string;
   testID?: string;
 }
 
+const uriCache = new Map<string, string>();
+
+/** The data URI of an icon drawn in `color` (`#rrggbb` or `#rrggbbaa`). */
+function iconUri(name: IconName, color: string): string {
+  const key = `${name}|${color}`;
+  let uri = uriCache.get(key);
+  if (uri === undefined) {
+    const rgb = color.slice(0, 7);
+    const alpha = color.length === 9 ? parseInt(color.slice(7), 16) / 255 : 1;
+    const body = iconSources[name].split(INK).join(rgb);
+    uri = `data:image/svg+xml,${encodeURIComponent(
+      `<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='${rgb}' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' opacity='${alpha}'>${body}</svg>`,
+    )}`;
+    uriCache.set(key, uri);
+  }
+  return uri;
+}
+
 export function Icon(props: IconProps) {
-  const size = props.size ?? 16;
   return (
     <Image
-      src={iconSources[props.name]}
-      style={{
-        width: size,
-        height: size,
-        tintColor: token(props.color ?? "muted-foreground"),
-      }}
+      src={iconUri(props.name, token(props.color ?? "muted-foreground"))}
+      style={{ width: props.size ?? 16, height: props.size ?? 16 }}
       class={props.class}
       accessibilityLabel={props.accessibilityLabel}
       testID={props.testID}
