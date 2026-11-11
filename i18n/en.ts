@@ -3,7 +3,7 @@ import type { MessageKey } from "./zh_CN";
 export const en: Record<MessageKey, string> = {
   "app.title": "Skills Manager",
   "app.stateError": "Could not sync app state",
-  "nav.marketplace": "Marketplace",
+  "nav.marketplace": "Skill Downloads",
   "nav.library": "Skill Library",
   "nav.settings": "Settings",
 
@@ -121,6 +121,7 @@ export const en: Record<MessageKey, string> = {
   "settings.theme.light": "Light",
   "settings.theme.dark": "Dark",
   "settings.theme.system": "System",
+  "settings.showMarketAvatars": "Show owner avatars",
   "settings.proxy.title": "Network proxy",
   "settings.proxy.mode": "Mode",
   "settings.proxy.mode.system": "System",
@@ -140,8 +141,8 @@ export const en: Record<MessageKey, string> = {
   "settings.data.hint": "Install records, skills and logs live in this directory.",
   "settings.data.error": "Could not read the data directory",
 
-  "marketplace.title": "Marketplace",
-  "marketplace.subtitle": "Browse skills on skills.sh, preview them and install them into your library",
+  "marketplace.title": "Skills Playground",
+  "marketplace.subtitle": "Browse skills on skills.sh",
   "marketplace.searchResults": "Search results",
   "library.selectAll": "Select everything listed",
   "library.openMarketplace": "Open the marketplace",

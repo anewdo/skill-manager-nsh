@@ -6,6 +6,7 @@ import type { AppStore } from "../../store";
 import {
   SEARCH_LIMIT,
   filterBySource,
+  githubOwner,
   installedLineages,
   type EntryStatus,
   type SourceFilter,
@@ -31,6 +32,8 @@ export function createMarketplaceController(store: AppStore) {
   const previewLoading = signal(false);
   const previewError = signal<AppError | null>(null);
 
+  const avatarFailures = signal<ReadonlySet<string>>(new Set<string>());
+
   const installed = computed(() => installedLineages(store.skills()));
   const filtered = computed(() => filterBySource(entries() ?? [], sourceFilter()));
   const searching = computed(() => appliedQuery() !== "");
@@ -50,6 +53,7 @@ export function createMarketplaceController(store: AppStore) {
     const request = ++loadSequence;
     loading.set(true);
     loadError.set(null);
+    avatarFailures.set(new Set<string>());
     const term = appliedQuery();
     try {
       const result =
@@ -121,6 +125,28 @@ export function createMarketplaceController(store: AppStore) {
     }
   }
 
+  /** Whether the entry's card holds the avatar's place: a GitHub owner, avatars turned on. */
+  function hasAvatar(entry: MarketplaceSkill): boolean {
+    return store.settings()?.show_market_avatars !== false && githubOwner(entry) !== null;
+  }
+
+  /** The GitHub avatar of the entry's owner, null when its image failed to load. */
+  function avatarUrl(entry: MarketplaceSkill): string | null {
+    const owner = githubOwner(entry);
+    if (owner === null || avatarFailures().has(owner)) {
+      return null;
+    }
+    return `https://github.com/${owner}.png?size=32`;
+  }
+
+  /** Drops an image that cannot load; the card keeps the avatar's place as a placeholder. */
+  function avatarFailed(entry: MarketplaceSkill): void {
+    const owner = githubOwner(entry);
+    if (owner !== null && !avatarFailures().has(owner)) {
+      avatarFailures.set(new Set([...avatarFailures(), owner]));
+    }
+  }
+
   /** Opens the preview of an entry and downloads it: the only place a preview is fetched. */
   async function openPreview(entry: MarketplaceSkill): Promise<void> {
     previewEntry.set(entry);
@@ -178,6 +204,9 @@ export function createMarketplaceController(store: AppStore) {
     refresh,
     status,
     install,
+    hasAvatar,
+    avatarUrl,
+    avatarFailed,
     previewEntry,
     previewOpen,
     preview,

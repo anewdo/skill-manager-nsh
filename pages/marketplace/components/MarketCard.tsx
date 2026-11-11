@@ -1,4 +1,4 @@
-import { View } from "nsh";
+import { Image, token, View } from "nsh";
 import { Icon } from "../../../components/icon";
 import { Button, Card, Label } from "../../../components/ui";
 import type { MessageKey } from "../../../i18n";
@@ -37,10 +37,23 @@ export function InstallButton(props: InstallButtonProps) {
   );
 }
 
+/** The circular box the owner avatar and its placeholder share. */
+const avatarShape = {
+  width: 32,
+  height: 32,
+  borderRadius: 16,
+  backgroundColor: token("muted"),
+};
+
 export interface MarketCardProps {
   entry: MarketplaceSkill;
   status: EntryStatus;
+  /** Whether the entry has an owner, so the card always holds the avatar's place. */
+  hasAvatar: boolean;
+  /** The owner's GitHub avatar, null once its image failed: a placeholder takes its place. */
+  avatarUrl: string | null;
   text: TextFn;
+  onAvatarError: () => void;
   onPreview: (entry: MarketplaceSkill) => void;
   onInstall: (entry: MarketplaceSkill) => void;
 }
@@ -49,13 +62,27 @@ export interface MarketCardProps {
 export function MarketCard(props: MarketCardProps) {
   return (
     <Card class="flex-1 gap-3 p-4" testID={`market-entry-${props.entry.name}`}>
-      <View class="gap-1">
-        <Label variant="strong" lines={1}>
-          {props.entry.name}
-        </Label>
-        <Label variant="caption" tone="muted" lines={1}>
-          {props.entry.source}
-        </Label>
+      <View class="flex-row items-center gap-2.5">
+        <If when={props.hasAvatar}>
+          <If when={props.avatarUrl} else={<View style={avatarShape} testID={`market-avatar-placeholder-${props.entry.name}`} />}>
+            {(url) => (
+              <Image
+                src={url()}
+                style={avatarShape}
+                onError={() => props.onAvatarError()}
+                testID={`market-avatar-${props.entry.name}`}
+              />
+            )}
+          </If>
+        </If>
+        <View class="flex-1 gap-1">
+          <Label variant="strong" lines={1}>
+            {props.entry.name}
+          </Label>
+          <Label variant="caption" tone="muted" lines={1}>
+            {props.entry.source}
+          </Label>
+        </View>
       </View>
       <View class="flex-row items-center gap-2">
         <View class="flex-1 flex-row items-center gap-1">

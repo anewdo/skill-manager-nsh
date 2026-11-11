@@ -1,6 +1,6 @@
 import { expect, test } from "nsh/test";
 import type { InstalledSkill, MarketplaceSkill, SourceType } from "../../lib/types";
-import { filterBySource, gridColumnsFor, installedLineages } from "./model";
+import { filterBySource, githubOwner, gridColumnsFor, installedLineages } from "./model";
 
 function entry(name: string, sourceType: SourceType = "github"): MarketplaceSkill {
   return {
@@ -65,4 +65,12 @@ test("picks the grid columns from the window width", () => {
   expect(gridColumnsFor(700)).toBe(2);
   expect(gridColumnsFor(1024)).toBe(3);
   expect(gridColumnsFor(1400)).toBe(4);
+});
+
+test("takes the owner from a GitHub source and none from a website source", () => {
+  expect(githubOwner(entry("a"))).toBe("owner");
+
+  const website = entry("b", "well_known");
+  website.source = "example.com";
+  expect(githubOwner(website)).toBeNull();
 });

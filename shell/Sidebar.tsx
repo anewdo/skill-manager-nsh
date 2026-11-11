@@ -16,8 +16,8 @@ interface NavEntry {
 }
 
 const navEntries: NavEntry[] = [
+  { page: "marketplace", icon: "download", label: "nav.marketplace" },
   { page: "library", icon: "library", label: "nav.library" },
-  { page: "marketplace", icon: "store", label: "nav.marketplace" },
   { page: "settings", icon: "settings", label: "nav.settings" },
 ];
 

@@ -11,6 +11,7 @@ import {
   PageHeader,
   Section,
   Segmented,
+  Switch,
   TextField,
 } from "../../components/ui";
 import type { MessageKey } from "../../i18n";
@@ -97,6 +98,14 @@ export function SettingsPage(props: { store: AppStore }) {
                 label={(option) => text(themeKeys[option])}
                 onChange={(option) => void c.setTheme(option)}
                 testID="settings-theme"
+              />
+            </Field>
+            <Field label={text("settings.showMarketAvatars")}>
+              <Switch
+                checked={c.showMarketAvatars()}
+                label={text("settings.showMarketAvatars")}
+                onChange={(checked) => void c.setShowMarketAvatars(checked)}
+                testID="settings-show-avatars"
               />
             </Field>
           </Section>

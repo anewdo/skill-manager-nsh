@@ -174,12 +174,14 @@ export interface Settings {
   language: Language;
   theme: Theme;
   proxy: ProxySettings;
+  show_market_avatars: boolean;
 }
 
 export interface SettingsPatch {
   language?: Language;
   theme?: Theme;
   proxy?: ProxyPatch;
+  show_market_avatars?: boolean;
 }
 
 export interface CacheClearReport {

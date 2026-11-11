@@ -286,11 +286,28 @@ pub struct ProxySettings {
     pub custom_url: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
     pub language: Language,
     pub theme: Theme,
     pub proxy: ProxySettings,
+    #[serde(default = "show_market_avatars_default")]
+    pub show_market_avatars: bool,
+}
+
+fn show_market_avatars_default() -> bool {
+    true
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            language: Language::default(),
+            theme: Theme::default(),
+            proxy: ProxySettings::default(),
+            show_market_avatars: show_market_avatars_default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
@@ -309,6 +326,8 @@ pub struct SettingsPatch {
     pub theme: Option<Theme>,
     #[serde(default)]
     pub proxy: Option<ProxyPatch>,
+    #[serde(default)]
+    pub show_market_avatars: Option<bool>,
 }
 
 impl SettingsPatch {
@@ -326,6 +345,9 @@ impl SettingsPatch {
             language: self.language.unwrap_or(current.language),
             theme: self.theme.unwrap_or(current.theme),
             proxy,
+            show_market_avatars: self
+                .show_market_avatars
+                .unwrap_or(current.show_market_avatars),
         }
     }
 }
@@ -366,12 +388,43 @@ mod tests {
                 mode: ProxyMode::Custom,
                 custom_url: Some("http://127.0.0.1:7897".to_string()),
             },
+            ..Settings::default()
         };
 
         let merged = patch(serde_json::json!({ "theme": "light" })).apply_to(&current);
         assert_eq!(merged.language, Language::En);
         assert_eq!(merged.theme, Theme::Light);
         assert_eq!(merged.proxy, current.proxy);
+    }
+
+    #[test]
+    fn avatars_are_shown_unless_the_patch_turns_them_off() {
+        let current = Settings::default();
+        assert!(current.show_market_avatars);
+
+        let merged = patch(serde_json::json!({ "show_market_avatars": false })).apply_to(&current);
+        assert!(!merged.show_market_avatars);
+        assert_eq!(
+            patch(serde_json::json!({ "theme": "dark" })).apply_to(&merged),
+            Settings {
+                theme: Theme::Dark,
+                show_market_avatars: false,
+                ..current
+            }
+        );
+    }
+
+    #[test]
+    fn settings_saved_before_avatars_existed_keep_them_on() {
+        let saved = serde_json::from_value::<Settings>(serde_json::json!({
+            "language": "en",
+            "theme": "dark",
+            "proxy": { "mode": "system", "custom_url": null }
+        }))
+        .unwrap();
+
+        assert_eq!(saved.language, Language::En);
+        assert!(saved.show_market_avatars);
     }
 
     #[test]

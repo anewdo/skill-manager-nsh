@@ -23,6 +23,7 @@ export function createSettingsController(store: AppStore) {
   const theme = signal<Theme>("system");
   const proxyMode = signal<ProxyMode>("system");
   const customUrl = signal("");
+  const showMarketAvatars = signal(true);
   const status = signal<SaveStatus>("idle");
   const saveError = signal<string | null>(null);
 
@@ -43,6 +44,7 @@ export function createSettingsController(store: AppStore) {
     theme.set(current.theme);
     proxyMode.set(current.proxy.mode);
     customUrl.set(current.proxy.custom_url ?? "");
+    showMarketAvatars.set(current.show_market_avatars);
   });
 
   async function persist(patch: SettingsPatch): Promise<boolean> {
@@ -72,6 +74,14 @@ export function createSettingsController(store: AppStore) {
     theme.set(value);
     if (!(await persist({ theme: value }))) {
       theme.set(previous);
+    }
+  }
+
+  async function setShowMarketAvatars(value: boolean): Promise<void> {
+    const previous = showMarketAvatars();
+    showMarketAvatars.set(value);
+    if (!(await persist({ show_market_avatars: value }))) {
+      showMarketAvatars.set(previous);
     }
   }
 
@@ -145,11 +155,13 @@ export function createSettingsController(store: AppStore) {
     theme,
     proxyMode,
     customUrl,
+    showMarketAvatars,
     status,
     saveError,
     dismissSaveError: () => saveError.set(null),
     setLanguage,
     setTheme,
+    setShowMarketAvatars,
     setProxyMode,
     editCustomUrl,
     saveCustomUrl,

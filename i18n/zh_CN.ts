@@ -1,7 +1,7 @@
 export const zhCN = {
   "app.title": "Skills Manager",
   "app.stateError": "应用状态同步失败",
-  "nav.marketplace": "市场",
+  "nav.marketplace": "Skill下载",
   "nav.library": "技能库",
   "nav.settings": "设置",
 
@@ -119,6 +119,7 @@ export const zhCN = {
   "settings.theme.light": "浅色",
   "settings.theme.dark": "深色",
   "settings.theme.system": "跟随系统",
+  "settings.showMarketAvatars": "显示作者头像",
   "settings.proxy.title": "网络代理",
   "settings.proxy.mode": "模式",
   "settings.proxy.mode.system": "跟随系统",
@@ -138,8 +139,8 @@ export const zhCN = {
   "settings.data.hint": "安装记录、Skills 和日志都保存在这个目录中。",
   "settings.data.error": "无法读取数据目录",
 
-  "marketplace.title": "市场",
-  "marketplace.subtitle": "浏览 skills.sh 上的 Skill，预览后安装到技能库",
+  "marketplace.title": "Skills 广场",
+  "marketplace.subtitle": "浏览 skills.sh 上的 Skill",
   "marketplace.searchResults": "搜索结果",
   "library.selectAll": "全选当前列表",
   "library.openMarketplace": "前往市场",

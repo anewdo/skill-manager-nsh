@@ -30,6 +30,15 @@ export function gridColumnsFor(width: number): number {
   return 1;
 }
 
+/** The GitHub owner of a Marketplace Entry; null for sources without one. */
+export function githubOwner(entry: MarketplaceSkill): string | null {
+  if (entry.lineage.source_type !== "github") {
+    return null;
+  }
+  const owner = entry.source.split("/")[0];
+  return owner || null;
+}
+
 /** The lineage keys of the Installed Skills whose files still exist. */
 export function installedLineages(skills: readonly InstalledSkill[]): Set<string> {
   const keys = new Set<string>();

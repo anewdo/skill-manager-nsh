@@ -153,7 +153,10 @@ export function MarketplacePage(props: { store: AppStore }) {
               <MarketCard
                 entry={entry()}
                 status={c.status(entry())}
+                hasAvatar={c.hasAvatar(entry())}
+                avatarUrl={c.avatarUrl(entry())}
                 text={text}
+                onAvatarError={() => c.avatarFailed(entry())}
                 onPreview={(item) => void c.openPreview(item)}
                 onInstall={c.install}
               />
