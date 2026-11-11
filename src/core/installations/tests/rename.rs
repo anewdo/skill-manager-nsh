@@ -78,7 +78,7 @@ fn case_only_rename_uses_a_safe_intermediate_path() {
     let renamed = stored(&store, "one");
     assert_eq!(renamed.display_name, "DEMO");
     assert_eq!(renamed.root_relpath, "DEMO");
-    let root = repo.skills_root(Category::Marketplace);
+    let root = repo.skills_root();
     assert!(
         fs::read_dir(&root)
             .unwrap()
@@ -197,7 +197,7 @@ fn rename_rolls_the_directory_back_when_the_database_update_fails() {
     let connection = rusqlite::Connection::open(repo.database_path()).unwrap();
     connection
         .execute_batch(
-            "CREATE TRIGGER reject_rename BEFORE UPDATE ON installations
+            "CREATE TRIGGER reject_rename BEFORE UPDATE ON skills
              BEGIN SELECT RAISE(ABORT, 'forced update failure'); END;",
         )
         .unwrap();

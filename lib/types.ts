@@ -1,4 +1,3 @@
-export type Category = "marketplace" | "local";
 export type SourceType = "github" | "well_known";
 export type LocalState = "unknown" | "clean" | "modified" | "missing";
 export type UpdateState = "unknown" | "up_to_date" | "available" | "check_failed";
@@ -89,7 +88,6 @@ export interface SkillSource {
 
 export interface Installation {
   id: string;
-  category: Category;
   display_name: string;
   root_relpath: string;
   root_key: string;

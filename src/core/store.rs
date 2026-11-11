@@ -8,15 +8,15 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 use super::central_repo::CentralRepo;
 use super::error::{AppError, ErrorCode, Result};
 use super::migrations;
-use super::model::{Category, Installation, LocalState, Settings, SkillSource, UpdateState};
+use super::model::{Installation, LocalState, Settings, SkillSource, UpdateState};
 
 const SETTINGS_KEY: &str = "app";
 const INSTALLATION_SELECT: &str = "
-    SELECT id, category, display_name, root_relpath, root_key,
+    SELECT id, display_name, root_relpath, root_key,
            source_type, source_key, source_json, installed_revision, remote_revision,
            baseline_hash, current_hash, local_state, update_state, update_checked_at,
            created_at, updated_at, last_error
-    FROM installations
+    FROM skills
 ";
 
 pub struct Store {
@@ -67,7 +67,7 @@ impl Store {
         updated_at: i64,
     ) -> Result<()> {
         let affected = self.conn()?.execute(
-            "UPDATE installations
+            "UPDATE skills
              SET current_hash = ?1, local_state = ?2, updated_at = ?3
              WHERE id = ?4",
             params![current_hash, local_state.as_str(), updated_at, id],
@@ -87,7 +87,7 @@ impl Store {
         updated_at: i64,
     ) -> Result<()> {
         let affected = self.conn()?.execute(
-            "UPDATE installations
+            "UPDATE skills
              SET display_name = ?1, root_relpath = ?2, root_key = ?3, updated_at = ?4
              WHERE id = ?5",
             params![display_name, root_relpath, root_key, updated_at, id],
@@ -107,7 +107,7 @@ impl Store {
         last_error: Option<&str>,
     ) -> Result<()> {
         let affected = self.conn()?.execute(
-            "UPDATE installations
+            "UPDATE skills
              SET remote_revision = ?1, update_state = ?2, update_checked_at = ?3,
                  last_error = ?4, updated_at = ?3
              WHERE id = ?5",
@@ -134,7 +134,7 @@ impl Store {
         updated_at: i64,
     ) -> Result<()> {
         let affected = self.conn()?.execute(
-            "UPDATE installations
+            "UPDATE skills
              SET installed_revision = ?1, remote_revision = ?2, baseline_hash = ?3,
                  current_hash = ?3, local_state = ?4, update_state = ?5,
                  update_checked_at = ?6, last_error = NULL, updated_at = ?6
@@ -158,7 +158,7 @@ impl Store {
     pub fn delete_installation_record(&self, id: &str) -> Result<()> {
         let affected = self
             .conn()?
-            .execute("DELETE FROM installations WHERE id = ?1", [id])?;
+            .execute("DELETE FROM skills WHERE id = ?1", [id])?;
         if affected == 0 {
             return Err(installation_not_found());
         }
@@ -176,13 +176,10 @@ impl Store {
         .map_err(Into::into)
     }
 
-    pub fn marketplace_installation_by_source(
-        &self,
-        source_key: &str,
-    ) -> Result<Option<Installation>> {
+    pub fn installation_by_source(&self, source_key: &str) -> Result<Option<Installation>> {
         let conn = self.conn()?;
         conn.query_row(
-            &format!("{INSTALLATION_SELECT} WHERE category = 'marketplace' AND source_key = ?1"),
+            &format!("{INSTALLATION_SELECT} WHERE source_key = ?1"),
             [source_key],
             map_installation,
         )
@@ -190,13 +187,13 @@ impl Store {
         .map_err(Into::into)
     }
 
-    pub fn list_installations(&self, category: Category) -> Result<Vec<Installation>> {
+    pub fn list_installations(&self) -> Result<Vec<Installation>> {
         let conn = self.conn()?;
         let mut statement = conn.prepare(&format!(
-            "{INSTALLATION_SELECT} WHERE category = ?1 ORDER BY display_name COLLATE NOCASE, id"
+            "{INSTALLATION_SELECT} ORDER BY display_name COLLATE NOCASE, id"
         ))?;
         let installations = statement
-            .query_map([category.as_str()], map_installation)?
+            .query_map([], map_installation)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(installations)
     }
@@ -229,18 +226,17 @@ impl Store {
 fn insert_installation_on(conn: &Connection, installation: &Installation) -> Result<()> {
     let (source_type, source_key, source_json) = source_columns(installation.source.as_ref())?;
     conn.execute(
-        "INSERT INTO installations (
-            id, category, display_name, root_relpath, root_key,
+        "INSERT INTO skills (
+            id, display_name, root_relpath, root_key,
             source_type, source_key, source_json, installed_revision, remote_revision,
             baseline_hash, current_hash, local_state, update_state, update_checked_at,
             created_at, updated_at, last_error
         ) VALUES (
             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
-            ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18
+            ?11, ?12, ?13, ?14, ?15, ?16, ?17
         )",
         params![
             installation.id,
-            installation.category.as_str(),
             installation.display_name,
             installation.root_relpath,
             installation.root_key,
@@ -279,39 +275,37 @@ fn source_columns(
 }
 
 fn map_installation(row: &Row<'_>) -> rusqlite::Result<Installation> {
-    let category: String = row.get(1)?;
-    let source_type: Option<String> = row.get(5)?;
-    let source_key: Option<String> = row.get(6)?;
-    let source_json: Option<String> = row.get(7)?;
-    let local_state: String = row.get(12)?;
-    let update_state: String = row.get(13)?;
+    let source_type: Option<String> = row.get(4)?;
+    let source_key: Option<String> = row.get(5)?;
+    let source_json: Option<String> = row.get(6)?;
+    let local_state: String = row.get(11)?;
+    let update_state: String = row.get(12)?;
 
     let source = match (source_type, source_key, source_json) {
         (Some(_), Some(_), Some(json)) => {
-            Some(serde_json::from_str(&json).map_err(|error| invalid_text_column(7, error))?)
+            Some(serde_json::from_str(&json).map_err(|error| invalid_text_column(6, error))?)
         }
         _ => None,
     };
 
     Ok(Installation {
         id: row.get(0)?,
-        category: Category::parse(&category).map_err(|error| invalid_text_column(1, error))?,
-        display_name: row.get(2)?,
-        root_relpath: row.get(3)?,
-        root_key: row.get(4)?,
+        display_name: row.get(1)?,
+        root_relpath: row.get(2)?,
+        root_key: row.get(3)?,
         source,
-        installed_revision: row.get(8)?,
-        remote_revision: row.get(9)?,
-        baseline_hash: row.get(10)?,
-        current_hash: row.get(11)?,
+        installed_revision: row.get(7)?,
+        remote_revision: row.get(8)?,
+        baseline_hash: row.get(9)?,
+        current_hash: row.get(10)?,
         local_state: LocalState::parse(&local_state)
-            .map_err(|error| invalid_text_column(12, error))?,
+            .map_err(|error| invalid_text_column(11, error))?,
         update_state: UpdateState::parse(&update_state)
-            .map_err(|error| invalid_text_column(13, error))?,
-        update_checked_at: row.get(14)?,
-        created_at: row.get(15)?,
-        updated_at: row.get(16)?,
-        last_error: row.get(17)?,
+            .map_err(|error| invalid_text_column(12, error))?,
+        update_checked_at: row.get(13)?,
+        created_at: row.get(14)?,
+        updated_at: row.get(15)?,
+        last_error: row.get(16)?,
     })
 }
 
@@ -332,15 +326,9 @@ mod tests {
     use crate::core::error::ErrorCode;
     use crate::core::model::{SourceType, Theme};
 
-    fn installation(
-        id: &str,
-        category: Category,
-        root_key: &str,
-        source_key: Option<&str>,
-    ) -> Installation {
+    fn installation(id: &str, root_key: &str, source_key: Option<&str>) -> Installation {
         Installation {
             id: id.to_owned(),
-            category,
             display_name: id.to_owned(),
             root_relpath: root_key.to_owned(),
             root_key: root_key.to_owned(),
@@ -369,48 +357,32 @@ mod tests {
     #[test]
     fn installation_round_trip_preserves_lineage_and_state() {
         let store = Store::in_memory().unwrap();
-        let expected = installation(
-            "one",
-            Category::Marketplace,
-            "demo",
-            Some("github:owner/repo:skills/demo"),
-        );
+        let expected = installation("one", "demo", Some("github:owner/repo:skills/demo"));
         store.insert_installation(&expected).unwrap();
 
         assert_eq!(store.installation("one").unwrap(), Some(expected.clone()));
-        assert_eq!(
-            store.list_installations(Category::Marketplace).unwrap(),
-            [expected]
-        );
-        assert!(
-            store
-                .list_installations(Category::Local)
-                .unwrap()
-                .is_empty()
-        );
+        assert_eq!(store.list_installations().unwrap(), [expected]);
     }
 
     #[test]
-    fn root_and_source_uniqueness_are_scoped_to_category() {
+    fn root_and_source_are_unique_across_the_library() {
         let store = Store::in_memory().unwrap();
         store
-            .insert_installation(&installation(
-                "one",
-                Category::Marketplace,
-                "demo",
-                Some("source-one"),
-            ))
+            .insert_installation(&installation("one", "demo", Some("source-one")))
             .unwrap();
 
-        let duplicate_root = installation("two", Category::Marketplace, "demo", Some("source-two"));
+        let duplicate_root = installation("two", "demo", Some("source-two"));
         assert!(store.insert_installation(&duplicate_root).is_err());
-        let duplicate_source =
-            installation("three", Category::Marketplace, "other", Some("source-one"));
+        let duplicate_source = installation("three", "other", Some("source-one"));
         assert!(store.insert_installation(&duplicate_source).is_err());
 
-        let local = installation("four", Category::Local, "demo", None);
+        let local_duplicate_root = installation("four", "demo", None);
+        assert!(store.insert_installation(&local_duplicate_root).is_err());
+        let local = installation("five", "local-demo", None);
         store.insert_installation(&local).unwrap();
-        assert!(store.installation("four").unwrap().is_some());
+        let another_local = installation("six", "local-other", None);
+        store.insert_installation(&another_local).unwrap();
+        assert_eq!(store.installation("five").unwrap().unwrap().source, None);
     }
 
     #[test]
@@ -452,17 +424,9 @@ mod tests {
     }
 
     #[test]
-    fn marketplace_requires_a_source_lineage() {
-        let store = Store::in_memory().unwrap();
-        let invalid = installation("one", Category::Marketplace, "demo", None);
-        let error = store.insert_installation(&invalid).unwrap_err();
-        assert_eq!(error.code, ErrorCode::Database);
-    }
-
-    #[test]
     fn local_state_and_rename_updates_leave_lineage_untouched() {
         let store = Store::in_memory().unwrap();
-        let original = installation("one", Category::Marketplace, "demo", Some("source-one"));
+        let original = installation("one", "demo", Some("source-one"));
         store.insert_installation(&original).unwrap();
 
         store
@@ -489,7 +453,7 @@ mod tests {
     #[test]
     fn update_checks_and_applied_updates_persist_their_state() {
         let store = Store::in_memory().unwrap();
-        let original = installation("one", Category::Marketplace, "demo", Some("source-one"));
+        let original = installation("one", "demo", Some("source-one"));
         store.insert_installation(&original).unwrap();
 
         store

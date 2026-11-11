@@ -114,7 +114,7 @@ fn delete_restores_the_directory_when_the_database_delete_fails() {
     let connection = rusqlite::Connection::open(repo.database_path()).unwrap();
     connection
         .execute_batch(
-            "CREATE TRIGGER reject_delete BEFORE DELETE ON installations
+            "CREATE TRIGGER reject_delete BEFORE DELETE ON skills
              BEGIN SELECT RAISE(ABORT, 'forced delete failure'); END;",
         )
         .unwrap();

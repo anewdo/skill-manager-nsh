@@ -33,7 +33,6 @@ function skill(name: string, sourceType: SourceType = "github"): MarketplaceSkil
 function installation(id: string, sourceKey: string | null): Installation {
   return {
     id,
-    category: "marketplace",
     display_name: id,
     root_relpath: id,
     root_key: id,

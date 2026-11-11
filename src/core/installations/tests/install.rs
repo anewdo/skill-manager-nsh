@@ -23,9 +23,7 @@ fn fresh_install_commits_files_lineage_and_content_identity() {
         Some("sha256:test")
     );
     assert_eq!(installation.baseline_hash, installation.current_hash);
-    let path = repo
-        .installation_path(Category::Marketplace, "demo")
-        .unwrap();
+    let path = repo.installation_path("demo").unwrap();
     assert!(path.join("SKILL.md").is_file());
     assert_eq!(
         store.installation(&installation.id).unwrap(),
@@ -78,7 +76,7 @@ fn same_lineage_conflicts_before_download_without_overwriting_files() {
 #[test]
 fn adopts_an_unmanaged_copy_with_identical_content() {
     let (_temp, repo, store) = setup();
-    let orphan = repo.skills_root(Category::Marketplace).join("demo");
+    let orphan = repo.skills_root().join("demo");
     write_skill(&orphan, "demo", "same");
 
     let snapshot = run_install(
@@ -98,13 +96,7 @@ fn adopts_an_unmanaged_copy_with_identical_content() {
         installation.baseline_hash,
         Some(content_hash(&orphan).unwrap())
     );
-    assert_eq!(
-        store
-            .list_installations(Category::Marketplace)
-            .unwrap()
-            .len(),
-        1
-    );
+    assert_eq!(store.list_installations().unwrap().len(), 1);
     assert_eq!(
         store.installation(&installation.id).unwrap(),
         Some(installation)
@@ -114,7 +106,7 @@ fn adopts_an_unmanaged_copy_with_identical_content() {
 #[test]
 fn installs_with_a_suffix_when_an_unmanaged_copy_differs() {
     let (_temp, repo, store) = setup();
-    let orphan = repo.skills_root(Category::Marketplace).join("demo");
+    let orphan = repo.skills_root().join("demo");
     write_skill(&orphan, "demo", "local copy");
 
     let snapshot = run_install(
@@ -174,7 +166,7 @@ fn reinstalls_a_lineage_whose_local_files_were_deleted() {
 }
 
 #[test]
-fn marketplace_listing_reports_deleted_installations_as_missing() {
+fn listing_reports_deleted_installations_as_missing() {
     let (_temp, repo, store) = setup();
     let existing = add_existing(
         &repo,
@@ -186,7 +178,7 @@ fn marketplace_listing_reports_deleted_installations_as_missing() {
     );
     fs::remove_dir_all(installation_path(&repo, "demo")).unwrap();
 
-    let installations = list_marketplace_installations(&repo, &store).unwrap();
+    let installations = list_installations(&repo, &store).unwrap();
 
     assert_eq!(installations.len(), 1);
     assert_eq!(installations[0].local_state, LocalState::Missing);
@@ -218,19 +210,8 @@ fn identical_content_from_another_source_reuses_the_existing_record() {
     assert_eq!(snapshot.state, OperationState::Succeeded);
     let reused: Installation = serde_json::from_value(snapshot.result.unwrap()).unwrap();
     assert_eq!(reused, existing);
-    assert_eq!(
-        store
-            .list_installations(Category::Marketplace)
-            .unwrap()
-            .len(),
-        1
-    );
-    assert!(
-        !repo
-            .installation_path(Category::Marketplace, "demo-2")
-            .unwrap()
-            .exists()
-    );
+    assert_eq!(store.list_installations().unwrap().len(), 1);
+    assert!(!repo.installation_path("demo-2").unwrap().exists());
 }
 
 #[test]
@@ -255,26 +236,18 @@ fn same_name_with_different_content_uses_a_numeric_suffix() {
     let installation: Installation = serde_json::from_value(snapshot.result.unwrap()).unwrap();
     assert_eq!(installation.root_relpath, "demo-2");
     assert!(
-        repo.installation_path(Category::Marketplace, "demo-2")
+        repo.installation_path("demo-2")
             .unwrap()
             .join("SKILL.md")
             .is_file()
     );
-    assert_eq!(
-        store
-            .list_installations(Category::Marketplace)
-            .unwrap()
-            .len(),
-        2
-    );
+    assert_eq!(store.list_installations().unwrap().len(), 2);
 }
 
 #[test]
 fn an_untracked_existing_target_is_never_overwritten() {
     let (_temp, repo, store) = setup();
-    let target = repo
-        .installation_path(Category::Marketplace, "demo")
-        .unwrap();
+    let target = repo.installation_path("demo").unwrap();
     write_skill(&target, "demo", "user files");
     fs::write(target.join("sentinel.txt"), "keep").unwrap();
 
@@ -297,13 +270,7 @@ fn an_untracked_existing_target_is_never_overwritten() {
         fs::read_to_string(target.join("sentinel.txt")).unwrap(),
         "keep"
     );
-    assert_eq!(
-        store
-            .list_installations(Category::Marketplace)
-            .unwrap()
-            .len(),
-        1
-    );
+    assert_eq!(store.list_installations().unwrap().len(), 1);
 }
 
 #[test]
@@ -312,7 +279,7 @@ fn database_failure_rolls_the_moved_directory_back_to_staging() {
     let connection = rusqlite::Connection::open(repo.database_path()).unwrap();
     connection
         .execute_batch(
-            "CREATE TRIGGER reject_install BEFORE INSERT ON installations
+            "CREATE TRIGGER reject_install BEFORE INSERT ON skills
              BEGIN SELECT RAISE(ABORT, 'forced insert failure'); END;",
         )
         .unwrap();
@@ -327,17 +294,7 @@ fn database_failure_rolls_the_moved_directory_back_to_staging() {
 
     assert_eq!(snapshot.state, OperationState::Failed);
     assert_eq!(snapshot.error.unwrap().code, ErrorCode::Database);
-    assert!(
-        !repo
-            .installation_path(Category::Marketplace, "demo")
-            .unwrap()
-            .exists()
-    );
-    assert!(
-        store
-            .list_installations(Category::Marketplace)
-            .unwrap()
-            .is_empty()
-    );
+    assert!(!repo.installation_path("demo").unwrap().exists());
+    assert!(store.list_installations().unwrap().is_empty());
     assert_eq!(fs::read_dir(repo.staging_dir()).unwrap().count(), 0);
 }

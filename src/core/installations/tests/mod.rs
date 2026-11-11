@@ -71,15 +71,12 @@ fn add_existing(
     root_relpath: &str,
     content: &str,
 ) -> Installation {
-    let path = repo
-        .installation_path(Category::Marketplace, root_relpath)
-        .unwrap();
+    let path = repo.installation_path(root_relpath).unwrap();
     let name = last_component(root_relpath);
     write_skill(&path, name, content);
     let hash = content_hash(&path).unwrap();
     let installation = Installation {
         id: id.to_string(),
-        category: Category::Marketplace,
         display_name: name.to_string(),
         root_relpath: root_relpath.to_string(),
         root_key: root_key(root_relpath),
@@ -144,8 +141,7 @@ fn stored(store: &Store, id: &str) -> Installation {
 }
 
 fn installation_path(repo: &CentralRepo, relative: &str) -> PathBuf {
-    repo.installation_path(Category::Marketplace, relative)
-        .unwrap()
+    repo.installation_path(relative).unwrap()
 }
 
 fn staging_entries(repo: &CentralRepo) -> Vec<PathBuf> {

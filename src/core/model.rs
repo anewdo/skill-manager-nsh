@@ -27,18 +27,6 @@ macro_rules! string_enum {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Category {
-    Marketplace,
-    Local,
-}
-
-string_enum!(Category, {
-    Marketplace => "marketplace",
-    Local => "local"
-});
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SourceType {
     #[serde(rename = "github")]
     GitHub,
@@ -178,7 +166,6 @@ pub struct SkillSource {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Installation {
     pub id: String,
-    pub category: Category,
     pub display_name: String,
     pub root_relpath: String,
     pub root_key: String,

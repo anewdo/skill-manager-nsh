@@ -14,10 +14,7 @@ pub enum RenameKind {
     Regular,
 }
 
-pub fn allocate_marketplace_name(
-    skill_name: &str,
-    used_root_keys: &BTreeSet<String>,
-) -> Result<String> {
+pub fn allocate_name(skill_name: &str, used_root_keys: &BTreeSet<String>) -> Result<String> {
     validate_component(skill_name)?;
     if !used_root_keys.contains(&root_key(skill_name)) {
         return Ok(skill_name.to_owned());
@@ -101,19 +98,19 @@ mod tests {
     #[test]
     fn allocates_plain_then_incrementing_numeric_suffixes() {
         let names = used(&[]);
-        assert_eq!(allocate_marketplace_name("demo", &names).unwrap(), "demo");
+        assert_eq!(allocate_name("demo", &names).unwrap(), "demo");
 
         let names = used(&["demo"]);
-        assert_eq!(allocate_marketplace_name("demo", &names).unwrap(), "demo-2");
+        assert_eq!(allocate_name("demo", &names).unwrap(), "demo-2");
 
         let names = used(&["demo", "demo-2", "demo-3"]);
-        assert_eq!(allocate_marketplace_name("demo", &names).unwrap(), "demo-4");
+        assert_eq!(allocate_name("demo", &names).unwrap(), "demo-4");
     }
 
     #[test]
     fn numeric_suffixes_fill_the_first_free_slot() {
         let names = used(&["demo", "demo-2", "demo-4"]);
-        assert_eq!(allocate_marketplace_name("demo", &names).unwrap(), "demo-3");
+        assert_eq!(allocate_name("demo", &names).unwrap(), "demo-3");
     }
 
     #[test]

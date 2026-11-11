@@ -11,11 +11,11 @@ use super::content_identity::{ContentSummary, content_hash, content_summary, fil
 use super::error::{AppError, ErrorCode, Result};
 use super::metadata;
 use super::model::{
-    BatchItemFailure, Category, CheckUpdatesReport, DeleteReport, DeletedItem, Installation,
+    BatchItemFailure, CheckUpdatesReport, DeleteReport, DeletedItem, Installation,
     InstallationDetail, LocalSkillInfo, LocalState, OperationProgress, ProxySettings, SkillSource,
     UpdateCheckItem, UpdateConflictPolicy, UpdateState,
 };
-use super::naming::{RenameKind, allocate_marketplace_name, classify_rename, root_key};
+use super::naming::{RenameKind, allocate_name, classify_rename, root_key};
 use super::operations::OperationContext;
 use super::sources::{DownloadedSkill, download, preview::canonical_source};
 use super::store::Store;
@@ -31,13 +31,13 @@ pub struct InstallOutcome {
     unmanaged_copy: Option<String>,
 }
 
-/// A marketplace directory that has no database record yet.
+/// A library directory that has no database record yet.
 struct UnmanagedRoot {
     name: String,
     identical: bool,
 }
 
-pub fn install_marketplace(
+pub fn install_from_source(
     repo: &CentralRepo,
     store: &Store,
     source: SkillSource,
@@ -71,7 +71,7 @@ fn install_with_download(
     context.progress(progress("validating", true))?;
     let hash = content_hash(&downloaded.skill_root)?;
 
-    let mut existing = store.list_installations(Category::Marketplace)?;
+    let mut existing = store.list_installations()?;
     reject_existing_lineage(&existing, &source)?;
 
     let skill_name = downloaded.metadata.name.clone();
@@ -81,7 +81,7 @@ fn install_with_download(
         return Ok((installation, None));
     }
     let (unmanaged, occupied) =
-        inspect_marketplace_roots(repo, &existing, &skill_name, &downloaded.skill_root, &hash)?;
+        inspect_library_roots(repo, &existing, &skill_name, &downloaded.skill_root, &hash)?;
     if let Some(adoptable) = unmanaged.iter().find(|root| root.identical) {
         let installation =
             adopt_unmanaged_root(store, adoptable, &skill_name, &downloaded, &source, &hash)?;
@@ -90,10 +90,10 @@ fn install_with_download(
     }
     let unmanaged_copy = unmanaged.first().map(|root| root.name.clone());
 
-    let relative_root = allocate_marketplace_name(&skill_name, &occupied)?;
+    let relative_root = allocate_name(&skill_name, &occupied)?;
     context.progress(progress("installing", false))?;
 
-    existing = store.list_installations(Category::Marketplace)?;
+    existing = store.list_installations()?;
     reject_existing_lineage(&existing, &source)?;
     let final_root_key = root_key(&relative_root);
     if existing
@@ -103,11 +103,11 @@ fn install_with_download(
         return Err(target_conflict(&relative_root));
     }
 
-    let target = repo.installation_path(Category::Marketplace, &relative_root)?;
+    let target = repo.installation_path(&relative_root)?;
     ensure_target_missing(&target, &relative_root)?;
     let created_parents = create_parent_directories(&target)?;
     if let Err(error) = repo
-        .installation_path(Category::Marketplace, &relative_root)
+        .installation_path(&relative_root)
         .and_then(|_| ensure_target_missing(&target, &relative_root))
     {
         cleanup_parent_directories(&created_parents);
@@ -121,7 +121,6 @@ fn install_with_download(
     let now = Utc::now().timestamp_millis();
     let installation = Installation {
         id: Uuid::new_v4().to_string(),
-        category: Category::Marketplace,
         display_name: downloaded.metadata.name.clone(),
         root_relpath: relative_root,
         root_key: final_root_key,
@@ -152,7 +151,7 @@ fn install_with_download(
     Ok((installation, unmanaged_copy))
 }
 
-/// Takes an unmanaged marketplace directory into the database when its files
+/// Takes an unmanaged library directory into the database when its files
 /// match the download, so the same skill is not stored twice.
 fn adopt_unmanaged_root(
     store: &Store,
@@ -165,7 +164,6 @@ fn adopt_unmanaged_root(
     let now = Utc::now().timestamp_millis();
     let installation = Installation {
         id: Uuid::new_v4().to_string(),
-        category: Category::Marketplace,
         display_name: skill_name.to_string(),
         root_relpath: root.name.clone(),
         root_key: root_key(&root.name),
@@ -185,10 +183,10 @@ fn adopt_unmanaged_root(
     Ok(installation)
 }
 
-/// Scans the marketplace directory for entries without a database record:
+/// Scans the library directory for entries without a database record:
 /// names that collide with the incoming skill stay available for adoption, and
 /// every entry name is reported as occupied so a new install never overwrites one.
-fn inspect_marketplace_roots(
+fn inspect_library_roots(
     repo: &CentralRepo,
     existing: &[Installation],
     skill_name: &str,
@@ -201,7 +199,7 @@ fn inspect_marketplace_roots(
         .collect::<BTreeSet<_>>();
     let mut occupied = managed.clone();
     let mut unmanaged = Vec::new();
-    let entries = match fs::read_dir(repo.skills_root(Category::Marketplace)) {
+    let entries = match fs::read_dir(repo.skills_root()) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok((unmanaged, occupied));
@@ -251,10 +249,10 @@ fn clear_missing_lineage(
     source: &SkillSource,
     context: &OperationContext,
 ) -> Result<()> {
-    let Some(installation) = store.marketplace_installation_by_source(&source.source_key)? else {
+    let Some(installation) = store.installation_by_source(&source.source_key)? else {
         return Ok(());
     };
-    let path = repo.installation_path(Category::Marketplace, &installation.root_relpath)?;
+    let path = repo.installation_path(&installation.root_relpath)?;
     match fs::symlink_metadata(&path) {
         Ok(_) => {
             return Err(AppError::new(
@@ -271,16 +269,13 @@ fn clear_missing_lineage(
     Ok(())
 }
 
-/// Marketplace listings also report installations whose files are gone, so a
+/// Listings also report installations whose files are gone, so a marketplace
 /// card returns to the installable state as soon as the local copy disappears.
-pub fn list_marketplace_installations(
-    repo: &CentralRepo,
-    store: &Store,
-) -> Result<Vec<Installation>> {
-    let mut installations = store.list_installations(Category::Marketplace)?;
+pub fn list_installations(repo: &CentralRepo, store: &Store) -> Result<Vec<Installation>> {
+    let mut installations = store.list_installations()?;
     let now = Utc::now().timestamp_millis();
     for installation in &mut installations {
-        let path = repo.installation_path(Category::Marketplace, &installation.root_relpath)?;
+        let path = repo.installation_path(&installation.root_relpath)?;
         let missing = matches!(
             fs::symlink_metadata(&path),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound
@@ -324,7 +319,7 @@ fn find_identical(
         .iter()
         .filter(|installation| installation.baseline_hash.as_deref() == Some(hash))
     {
-        let path = repo.installation_path(Category::Marketplace, &installation.root_relpath)?;
+        let path = repo.installation_path(&installation.root_relpath)?;
         match fs::symlink_metadata(&path) {
             Ok(_) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
@@ -434,8 +429,8 @@ pub fn rename_installation(
     let new_root_key = root_key(&new_relpath);
     reject_root_key_conflict(store, &installation, &new_root_key, &new_relpath)?;
 
-    let source = repo.installation_path(installation.category, &installation.root_relpath)?;
-    let target = repo.installation_path(installation.category, &new_relpath)?;
+    let source = repo.installation_path(&installation.root_relpath)?;
+    let target = repo.installation_path(&new_relpath)?;
     ensure_directory(&source, &installation.root_relpath)?;
     if !(cfg!(windows) && kind == RenameKind::CaseOnly) {
         ensure_target_missing(&target, &new_relpath)?;
@@ -724,7 +719,7 @@ fn apply_update_with_download(
             .ok_or_else(|| AppError::internal("installation disappeared after update"));
     }
 
-    let target = repo.installation_path(current.category, &current.root_relpath)?;
+    let target = repo.installation_path(&current.root_relpath)?;
     let created_parents = if local.summary.is_some() {
         Vec::new()
     } else {
@@ -791,12 +786,6 @@ fn apply_update_with_download(
 }
 
 fn remote_source(installation: &Installation) -> Result<SkillSource> {
-    if installation.category != Category::Marketplace {
-        return Err(AppError::new(
-            ErrorCode::Unsupported,
-            "only marketplace installations can be checked or updated",
-        ));
-    }
     let source = installation.source.clone().ok_or_else(|| {
         AppError::new(ErrorCode::Unsupported, "installation has no remote source")
     })?;
@@ -810,7 +799,7 @@ struct LocalInspection {
 }
 
 fn inspect_local(repo: &CentralRepo, installation: &Installation) -> Result<LocalInspection> {
-    let path = repo.installation_path(installation.category, &installation.root_relpath)?;
+    let path = repo.installation_path(&installation.root_relpath)?;
     let metadata = match fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -974,7 +963,7 @@ fn reject_root_key_conflict(
     new_relpath: &str,
 ) -> Result<()> {
     let conflict = store
-        .list_installations(installation.category)?
+        .list_installations()?
         .into_iter()
         .any(|other| other.id != installation.id && other.root_key == new_root_key);
     if conflict {

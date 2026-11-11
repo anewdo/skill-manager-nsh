@@ -1,7 +1,6 @@
 import { nativeModule } from "nsh";
 import type {
   CacheClearReport,
-  Category,
   ConnectivityCheck,
   DisplayWorkArea,
   Installation,
@@ -24,7 +23,7 @@ interface NativeModules {
     marketLeaderboard(kind: string, forceRefresh: boolean): Promise<unknown>;
     marketSearch(query: string, limit: number, forceRefresh: boolean): Promise<unknown>;
     marketPreview(source: unknown): Promise<unknown>;
-    installMarketplace(source: unknown, label: unknown): unknown;
+    installFromSource(source: unknown, label: unknown): unknown;
     activeOperation(): unknown;
     operationSnapshot(id: string): unknown;
     cancelOperation(id: string): unknown;
@@ -34,7 +33,7 @@ interface NativeModules {
     clearCache(): Promise<unknown>;
     testConnectivity(): Promise<unknown>;
     dataDirectory(): Promise<unknown>;
-    listInstallations(category: string): Promise<unknown>;
+    listInstallations(): Promise<unknown>;
     installationDetail(id: string): Promise<unknown>;
     renameInstallation(id: string, newName: string): unknown;
     deleteInstallations(ids: unknown, confirmModified: boolean): unknown;
@@ -72,11 +71,11 @@ export async function marketPreview(source: SkillSource): Promise<SkillPreview> 
   return await AppNative.marketPreview(source) as SkillPreview;
 }
 
-export function installMarketplace(
+export function installFromSource(
   source: SkillSource,
   label: { name: string; source: string },
 ): string {
-  return AppNative.installMarketplace(source, label) as string;
+  return AppNative.installFromSource(source, label) as string;
 }
 
 export function activeOperation(): OperationSnapshot | null {
@@ -117,8 +116,8 @@ export async function dataDirectory(): Promise<string> {
   return await AppNative.dataDirectory() as string;
 }
 
-export async function listInstallations(category: Category): Promise<Installation[]> {
-  return await AppNative.listInstallations(category) as Installation[];
+export async function listInstallations(): Promise<Installation[]> {
+  return await AppNative.listInstallations() as Installation[];
 }
 
 export async function installationDetail(id: string): Promise<InstallationDetail> {

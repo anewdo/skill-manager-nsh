@@ -137,10 +137,10 @@ fn local_preview(
     repo: &CentralRepo,
     source: &SkillSource,
 ) -> Result<Option<SkillPreview>> {
-    let Some(installation) = store.marketplace_installation_by_source(&source.source_key)? else {
+    let Some(installation) = store.installation_by_source(&source.source_key)? else {
         return Ok(None);
     };
-    let root = repo.installation_path(installation.category, &installation.root_relpath)?;
+    let root = repo.installation_path(&installation.root_relpath)?;
     let skill_md = read_skill_md(&root)?;
     let metadata = parse_skill_md_content(&skill_md, &root.join("SKILL.md").display().to_string())?;
     let digest = installation
@@ -322,7 +322,7 @@ mod tests {
 
     use std::cell::Cell;
 
-    use crate::core::model::{Category, Installation, LocalState, UpdateState};
+    use crate::core::model::{Installation, LocalState, UpdateState};
 
     fn skill_source(name: &str) -> SkillSource {
         skills_sh::marketplace_source("owner/repo", name).unwrap()
@@ -442,7 +442,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let repo = CentralRepo::new(temp.path().join("repo"));
         repo.ensure().unwrap();
-        let root = repo.skills_root(Category::Marketplace).join("demo");
+        let root = repo.skills_root().join("demo");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(
             root.join("SKILL.md"),
@@ -456,7 +456,6 @@ mod tests {
         store
             .insert_installation(&Installation {
                 id: "one".to_string(),
-                category: Category::Marketplace,
                 display_name: "demo".to_string(),
                 root_relpath: "demo".to_string(),
                 root_key: "demo".to_string(),

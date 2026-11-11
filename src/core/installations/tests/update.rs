@@ -284,7 +284,7 @@ fn apply_update_restores_the_previous_files_when_the_database_update_fails() {
     let connection = rusqlite::Connection::open(repo.database_path()).unwrap();
     connection
         .execute_batch(
-            "CREATE TRIGGER reject_update BEFORE UPDATE ON installations
+            "CREATE TRIGGER reject_update BEFORE UPDATE ON skills
              BEGIN SELECT RAISE(ABORT, 'forced update failure'); END;",
         )
         .unwrap();

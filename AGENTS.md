@@ -2,7 +2,7 @@
 
 ## 项目定位
 
-使用 nsh 构建桌面端App--Skills Manager。核心功能包括 skills.sh 市场、显式预览、安装、技能库、手动更新和设置
+使用 nsh 构建桌面端App--Skills Manager。核心功能包括 skills.sh 市场、显式预览、安装、GitHub URL 与本地导入、单一技能库、手动更新、向 Agent 平台部署 Skill、Preset 和设置。实施顺序与各阶段范围见 `docs/plans/2026-11-11-roadmap.md`
 
 ## 技术栈
 
@@ -27,7 +27,7 @@ src/api/mod.rs             # AppNative、JsError、blocking、Callback
 src/core/                  # 模型、Store、路径、队列、安装等核心逻辑
 src/core/sources/          # skills.sh、GitHub、well-known、预览与下载
 .nsh/types/                # nsh 自动生成的声明
-docs/plans/                # 已确认的产品与实施计划
+docs/plans/                # 已确认的产品与实施计划；当前路线图为 2026-11-11-roadmap.md
 docs/progress/             # 分模块实现状态与验证记录
 docs/todo/                 # 后续工作安排
 ```
@@ -50,7 +50,9 @@ docs/todo/                 # 后续工作安排
 - Preview 只在用户显式调用时联网；启动、打开详情和列表加载不得隐式触发预览下载
 - 拒绝路径逃逸、链接、特殊文件、危险 ZIP 条目、重复路径和超限归档
 - 文本内容身份统一 CRLF/LF 并忽略末尾一个换行；二进制保持字节精确，哈希候选必须再经完整文件树判同
+- 技能库是单一集合，目录为扁平的 `skills/<name>/`，名称全库唯一；来源只是 Skill 的属性，没有来源的 Skill 不能更新
 - 同 source lineage 走更新；同内容不同来源复用安装；同名不同内容使用数字后缀（`skill-2`、`skill-3`）
+- Deployment 记录是历史意图而非所有权证明：移除或覆盖 Deploy Target 中的任何内容前，必须用 `symlink_metadata` 确认磁盘现状与记录一致
 - 不得静默覆盖本地修改。目录 rename 后进入不可取消提交边界，数据库失败必须恢复文件系统状态
 - 仅在真实提交后发送安装变更事件；UI 和设置页只展示已经实现的能力
 
@@ -68,4 +70,4 @@ nsh test
 
 > 测试尽量仅运行本次改动相关部分而非全量运行
 
-评估已实现与未实现边界时读 `docs/progress/` 最新文档；安排后续任务时读 `docs/todo/` 最新文档；核对产品范围时读 `docs/plans/2026-11-09-marketplace-debug.md`。功能完成或验证结果变化时同步更新进度与待办文档。
+安排后续任务和核对产品范围时读 `docs/plans/2026-11-11-roadmap.md`；评估已实现与未实现边界时读 `docs/progress/` 最新文档。`docs/plans/2026-11-09-marketplace-debug.md` 与 `docs/todo/2026-11-09-next-steps.md` 描述的是合并技能库之前的阶段，其中与路线图冲突的内容以路线图为准。每个路线图阶段完成后在 `docs/progress/` 新增一份总结。

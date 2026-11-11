@@ -259,7 +259,7 @@ export function createAppStore(): AppStore {
   async function refreshInstallations(): Promise<void> {
     const request = ++installationsRequest;
     try {
-      const list = await api.listInstallations("marketplace");
+      const list = await api.listInstallations();
       if (request !== installationsRequest) {
         return;
       }
@@ -396,7 +396,7 @@ export function createAppStore(): AppStore {
   function startInstall(source: SkillSource, label: OperationLabel): void {
     const installedBefore = installations().map((installation) => installation.id);
     try {
-      const operationId = api.installMarketplace(source, label);
+      const operationId = api.installFromSource(source, label);
       installs.set([
         ...installs(),
         { operationId, sourceKey: source.source_key, installedBefore },

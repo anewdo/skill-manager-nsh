@@ -23,7 +23,6 @@ function installation(
 ): Installation {
   return {
     id,
-    category: "marketplace",
     display_name: id,
     root_relpath: `scope/${id}`,
     root_key: `scope/${id}`,

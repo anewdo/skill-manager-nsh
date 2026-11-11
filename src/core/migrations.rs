@@ -35,12 +35,11 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
 fn migrate_to_v1(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "
-        CREATE TABLE installations (
+        CREATE TABLE skills (
             id TEXT PRIMARY KEY,
-            category TEXT NOT NULL CHECK (category IN ('marketplace', 'local')),
             display_name TEXT NOT NULL,
             root_relpath TEXT NOT NULL,
-            root_key TEXT NOT NULL,
+            root_key TEXT NOT NULL UNIQUE,
             source_type TEXT,
             source_key TEXT,
             source_json TEXT,
@@ -56,20 +55,97 @@ fn migrate_to_v1(conn: &Connection) -> Result<()> {
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL,
             last_error TEXT,
-            UNIQUE (category, root_key),
             CHECK (
                 (source_type IS NULL AND source_key IS NULL AND source_json IS NULL)
                 OR
                 (source_type IS NOT NULL AND source_key IS NOT NULL AND source_json IS NOT NULL)
-            ),
-            CHECK (category <> 'marketplace' OR source_key IS NOT NULL)
+            )
         );
 
-        CREATE UNIQUE INDEX idx_installations_source
-            ON installations(category, source_key)
+        CREATE UNIQUE INDEX idx_skills_source
+            ON skills(source_key)
             WHERE source_key IS NOT NULL;
-        CREATE INDEX idx_installations_content
-            ON installations(category, baseline_hash);
+        CREATE INDEX idx_skills_content ON skills(baseline_hash);
+
+        -- User overrides for built-in agents, plus user-defined agents.
+        CREATE TABLE agents (
+            key TEXT PRIMARY KEY,
+            enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+            custom_path TEXT,
+            mode TEXT CHECK (mode IN ('link', 'copy')),
+            is_custom INTEGER NOT NULL DEFAULT 0 CHECK (is_custom IN (0, 1)),
+            display_name TEXT,
+            updated_at INTEGER NOT NULL,
+            CHECK (is_custom = 0 OR (display_name IS NOT NULL AND custom_path IS NOT NULL))
+        );
+
+        -- One real skills directory. Agents sharing a directory share a target.
+        CREATE TABLE deploy_targets (
+            id TEXT PRIMARY KEY,
+            scope TEXT NOT NULL CHECK (scope IN ('global', 'project')),
+            root_path TEXT NOT NULL,
+            root_key TEXT NOT NULL UNIQUE,
+            project_path TEXT,
+            created_at INTEGER NOT NULL,
+            CHECK ((scope = 'project') = (project_path IS NOT NULL))
+        );
+
+        CREATE TABLE target_agents (
+            target_id TEXT NOT NULL REFERENCES deploy_targets(id) ON DELETE CASCADE,
+            agent_key TEXT NOT NULL,
+            PRIMARY KEY (target_id, agent_key)
+        );
+
+        CREATE TABLE presets (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            name_key TEXT NOT NULL UNIQUE,
+            icon TEXT,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+
+        CREATE TABLE preset_skills (
+            preset_id TEXT NOT NULL REFERENCES presets(id) ON DELETE CASCADE,
+            skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (preset_id, skill_id)
+        );
+        CREATE INDEX idx_preset_skills_skill ON preset_skills(skill_id);
+
+        -- Desired state: presets and single skills switched on for a target.
+        CREATE TABLE target_presets (
+            target_id TEXT NOT NULL REFERENCES deploy_targets(id) ON DELETE CASCADE,
+            preset_id TEXT NOT NULL REFERENCES presets(id) ON DELETE CASCADE,
+            PRIMARY KEY (target_id, preset_id)
+        );
+        CREATE INDEX idx_target_presets_preset ON target_presets(preset_id);
+
+        CREATE TABLE target_skills (
+            target_id TEXT NOT NULL REFERENCES deploy_targets(id) ON DELETE CASCADE,
+            skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+            PRIMARY KEY (target_id, skill_id)
+        );
+        CREATE INDEX idx_target_skills_skill ON target_skills(skill_id);
+
+        -- Actual state: what the app placed in a target. A row records past
+        -- intent, never proof of what is on disk now, so it has no cascade:
+        -- the files must be removed before the row is.
+        CREATE TABLE deployments (
+            target_id TEXT NOT NULL REFERENCES deploy_targets(id),
+            skill_id TEXT NOT NULL REFERENCES skills(id),
+            dir_name TEXT NOT NULL,
+            dir_key TEXT NOT NULL,
+            mode TEXT NOT NULL CHECK (mode IN ('link', 'copy')),
+            deployed_hash TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            last_error TEXT,
+            PRIMARY KEY (target_id, skill_id),
+            UNIQUE (target_id, dir_key)
+        );
+        CREATE INDEX idx_deployments_skill ON deployments(skill_id);
 
         CREATE TABLE settings (
             key TEXT PRIMARY KEY,
@@ -102,7 +178,21 @@ mod tests {
             .unwrap()
             .collect::<rusqlite::Result<_>>()
             .unwrap();
-        assert_eq!(tables, ["installations", "settings"]);
+        assert_eq!(
+            tables,
+            [
+                "agents",
+                "deploy_targets",
+                "deployments",
+                "preset_skills",
+                "presets",
+                "settings",
+                "skills",
+                "target_agents",
+                "target_presets",
+                "target_skills",
+            ]
+        );
     }
 
     #[test]

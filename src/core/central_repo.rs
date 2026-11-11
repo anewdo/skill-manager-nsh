@@ -2,7 +2,6 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use super::error::{AppError, Result};
-use super::model::Category;
 
 #[derive(Debug, Clone)]
 pub struct CentralRepo {
@@ -28,8 +27,8 @@ impl CentralRepo {
         self.root.join("skills-manager.db")
     }
 
-    pub fn skills_root(&self, category: Category) -> PathBuf {
-        self.root.join("skills").join(category.as_str())
+    pub fn skills_root(&self) -> PathBuf {
+        self.root.join("skills")
     }
 
     pub fn git_cache_dir(&self) -> PathBuf {
@@ -51,8 +50,7 @@ impl CentralRepo {
     pub fn ensure(&self) -> Result<()> {
         for path in [
             self.root.clone(),
-            self.skills_root(Category::Marketplace),
-            self.skills_root(Category::Local),
+            self.skills_root(),
             self.git_cache_dir(),
             self.market_cache_dir(),
             self.staging_dir(),
@@ -63,8 +61,8 @@ impl CentralRepo {
         Ok(())
     }
 
-    pub fn installation_path(&self, category: Category, relative: &str) -> Result<PathBuf> {
-        resolve_within(&self.skills_root(category), relative)
+    pub fn installation_path(&self, relative: &str) -> Result<PathBuf> {
+        resolve_within(&self.skills_root(), relative)
     }
 
     pub fn staging_path(&self, relative: &str) -> Result<PathBuf> {
@@ -138,8 +136,7 @@ mod tests {
         repo.ensure().unwrap();
 
         assert!(repo.database_path().ends_with("skills-manager.db"));
-        assert!(repo.skills_root(Category::Marketplace).is_dir());
-        assert!(repo.skills_root(Category::Local).is_dir());
+        assert!(repo.skills_root().is_dir());
         assert!(repo.git_cache_dir().is_dir());
         assert!(repo.market_cache_dir().is_dir());
         assert!(repo.staging_dir().is_dir());

@@ -9,7 +9,7 @@ use crate::core::http;
 use crate::core::installations;
 use crate::core::market;
 use crate::core::model::{
-    Category, Installation, OperationEvent, OperationKind, OperationLabel, Settings, SettingsPatch,
+    Installation, OperationEvent, OperationKind, OperationLabel, Settings, SettingsPatch,
     SkillSource, UpdateConflictPolicy,
 };
 use crate::core::operations::OperationQueue;
@@ -90,8 +90,8 @@ impl AppNative {
         .await
     }
 
-    /// Queues a marketplace installation and returns its operation ID.
-    pub fn install_marketplace(
+    /// Queues the installation of a remote Skill source and returns its operation ID.
+    pub fn install_from_source(
         source: JsonValue,
         label: JsonValue,
     ) -> std::result::Result<JsonValue, JsError> {
@@ -109,7 +109,7 @@ impl AppNative {
         let id = operations()
             .enqueue_with_label(OperationKind::Install, Some(label), move |context| {
                 let proxy = state.store.settings()?.proxy;
-                installations::install_marketplace(
+                installations::install_from_source(
                     &state.repo,
                     &state.store,
                     source,
@@ -197,16 +197,12 @@ impl AppNative {
         run_json(|| Ok(app_state()?.repo.root().display().to_string())).await
     }
 
-    /// Lists installations in one category.
-    pub async fn list_installations(category: String) -> std::result::Result<JsonValue, JsError> {
-        let category = parse_category(&category).map_err(js_error)?;
+    /// Lists every Skill in the library.
+    pub async fn list_installations() -> std::result::Result<JsonValue, JsError> {
         run_json(move || {
             let state = app_state()?;
-            let installations: Vec<Installation> = if category == Category::Marketplace {
-                installations::list_marketplace_installations(&state.repo, &state.store)?
-            } else {
-                state.store.list_installations(category)?
-            };
+            let installations: Vec<Installation> =
+                installations::list_installations(&state.repo, &state.store)?;
             Ok(installations)
         })
         .await
@@ -316,14 +312,6 @@ fn app_state() -> Result<Arc<AppState>> {
 
 fn operations() -> &'static OperationQueue {
     OPERATIONS.get_or_init(OperationQueue::new)
-}
-
-fn parse_category(value: &str) -> Result<Category> {
-    match value {
-        "marketplace" => Ok(Category::Marketplace),
-        "local" => Ok(Category::Local),
-        _ => Err(AppError::invalid_input("unknown installation category")),
-    }
 }
 
 fn parse_id_list(value: JsonValue) -> Result<Vec<String>> {
