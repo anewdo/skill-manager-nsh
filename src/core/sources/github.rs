@@ -20,10 +20,8 @@ const MAX_CANDIDATES: usize = 256;
 const MAX_GIT_STDERR_BYTES: usize = 8_000;
 const MAX_GIT_STDERR_LINE_BYTES: usize = 4_096;
 const GIT_POLL_INTERVAL: Duration = Duration::from_millis(10);
-const PROGRESS_SCALE: u64 = 100;
-const CLONE_PROGRESS: (u64, u64) = (0, 40);
-const CHECKOUT_PROGRESS: (u64, u64) = (50, 100);
 
+#[derive(Clone)]
 struct SkillTreeEntry {
     /// The repository-relative directory of a SKILL.md; empty for the repository root.
     root: String,
@@ -75,11 +73,25 @@ fn download_repository(
         ],
         proxy,
         true,
-        Some(CLONE_PROGRESS),
+        true,
         observer,
     )?;
+    observer.report(DownloadProgress {
+        current: 0,
+        total: None,
+        bytes: None,
+        bytes_total: None,
+        detail: Some("repository metadata".to_string()),
+    })?;
 
     let skill_root = resolve_skill_root(&checkout, subpath, proxy, observer)?;
+    observer.report(DownloadProgress {
+        current: 0,
+        total: None,
+        bytes: None,
+        bytes_total: None,
+        detail: Some("selecting skill".to_string()),
+    })?;
     if skill_root.is_empty() {
         run_git(
             [
@@ -90,7 +102,7 @@ fn download_repository(
             ],
             proxy,
             false,
-            None,
+            false,
             observer,
         )?;
     } else {
@@ -106,10 +118,17 @@ fn download_repository(
             ],
             proxy,
             false,
-            None,
+            false,
             observer,
         )?;
     }
+    observer.report(DownloadProgress {
+        current: 0,
+        total: None,
+        bytes: None,
+        bytes_total: None,
+        detail: Some("preparing files".to_string()),
+    })?;
     run_git(
         [
             OsString::from("-C"),
@@ -120,7 +139,7 @@ fn download_repository(
         ],
         proxy,
         false,
-        Some(CHECKOUT_PROGRESS),
+        true,
         observer,
     )?;
     let output = run_git(
@@ -132,7 +151,7 @@ fn download_repository(
         ],
         proxy,
         false,
-        None,
+        false,
         observer,
     )?;
     let revision = String::from_utf8(output.stdout)
@@ -177,6 +196,37 @@ fn resolve_skill_root(
             format!("the repository contains more than {MAX_CANDIDATES} SKILL.md candidates"),
         ));
     }
+    let mut exact: Vec<&SkillTreeEntry> = entries
+        .iter()
+        .filter(|entry| entry.root == subpath)
+        .collect();
+    exact.sort_by(|left, right| left.root.cmp(&right.root));
+    exact.dedup_by(|left, right| left.root == right.root);
+    if exact.len() == 1 {
+        let exact_names = read_candidate_names(checkout, &[exact[0].clone()], proxy, observer)?;
+        if exact_names.first().and_then(Option::as_deref) == Some(subpath) {
+            return Ok(exact[0].root.clone());
+        }
+    }
+    let mut direct: Vec<&SkillTreeEntry> = entries
+        .iter()
+        .filter(|entry| entry.root.rsplit('/').next() == Some(subpath))
+        .collect();
+    direct.sort_by(|left, right| left.root.cmp(&right.root));
+    direct.dedup_by(|left, right| left.root == right.root);
+    if direct.len() == 1 {
+        let direct_names = read_candidate_names(checkout, &[direct[0].clone()], proxy, observer)?;
+        if direct_names.first().and_then(Option::as_deref) == Some(subpath) {
+            return Ok(direct[0].root.clone());
+        }
+    }
+    observer.report(DownloadProgress {
+        current: 0,
+        total: None,
+        bytes: None,
+        bytes_total: None,
+        detail: Some("reading skill metadata".to_string()),
+    })?;
     let names = read_candidate_names(checkout, &entries, proxy, observer)?;
 
     let mut named: Vec<String> = entries
@@ -235,7 +285,7 @@ fn list_skill_candidates(
         ],
         proxy,
         false,
-        None,
+        false,
         observer,
     )?;
 
@@ -311,7 +361,7 @@ fn read_candidate_names(
             }
         }
     });
-    let output = wait_git_child(&mut child, None, observer);
+    let output = wait_git_child(&mut child, false, observer);
     let _ = writer.join();
     let output = output?;
     if !output.status.success() {
@@ -407,10 +457,19 @@ fn run_git(
     args: impl IntoIterator<Item = OsString>,
     proxy: &ProxySettings,
     retryable: bool,
-    progress_span: Option<(u64, u64)>,
+    report_progress: bool,
     observer: &dyn DownloadObserver,
 ) -> Result<Output> {
     observer.check_cancelled()?;
+    if report_progress {
+        observer.report(DownloadProgress {
+            current: 0,
+            total: None,
+            bytes: None,
+            bytes_total: None,
+            detail: Some("starting git".to_string()),
+        })?;
+    }
     let mut child = git_command(proxy)?
         .args(args)
         .stdin(Stdio::null())
@@ -418,7 +477,7 @@ fn run_git(
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| git_error(format!("failed to run git: {error}"), false))?;
-    let output = wait_git_child(&mut child, progress_span, observer)?;
+    let output = wait_git_child(&mut child, report_progress, observer)?;
     if output.status.success() {
         return Ok(output);
     }
@@ -439,7 +498,7 @@ fn run_git(
 /// is cancelled, so `git-remote-https` does not linger.
 fn wait_git_child(
     child: &mut Child,
-    progress_span: Option<(u64, u64)>,
+    report_progress: bool,
     observer: &dyn DownloadObserver,
 ) -> Result<Output> {
     let stdout = child.stdout.take().expect("stdout was piped");
@@ -456,7 +515,7 @@ fn wait_git_child(
             if update.bytes.is_some() {
                 bytes = update.bytes;
             }
-            if let Err(error) = report_git_progress(observer, progress_span, update, bytes) {
+            if let Err(error) = report_git_progress(observer, report_progress, update, bytes) {
                 terminate_tree(child);
                 let _ = stdout_reader.join();
                 let _ = stderr_reader.join();
@@ -483,6 +542,10 @@ fn wait_git_child(
         }
     }
 
+    if status.is_some_and(|exit| !exit.success()) {
+        terminate_tree(child);
+    }
+
     let stdout = stdout_reader
         .join()
         .map_err(|_| AppError::internal("git stdout reader panicked"))?;
@@ -502,32 +565,27 @@ fn wait_git_child(
 
 fn report_git_progress(
     observer: &dyn DownloadObserver,
-    span: Option<(u64, u64)>,
+    report_progress: bool,
     update: GitProgress,
     bytes: Option<u64>,
 ) -> Result<()> {
-    let Some((start, end)) = span else {
+    if !report_progress {
         return Ok(());
-    };
-    let width = end.saturating_sub(start);
-    // Files are written after the transfer finishes, so it keeps the tail of
-    // the span and the percentage never moves backwards inside one command.
-    let (from, to) = match update.kind {
-        GitProgressKind::Transfer => (start, start + width * 9 / 10),
-        GitProgressKind::Checkout => (start + width * 9 / 10, end),
-    };
-    let overall = from
-        + update
-            .current
-            .min(update.total)
-            .saturating_mul(to.saturating_sub(from))
-            .checked_div(update.total)
-            .unwrap_or(0);
+    }
     observer.report(DownloadProgress {
-        current: overall.min(end),
-        total: Some(PROGRESS_SCALE),
+        current: bytes.unwrap_or(0),
+        total: None,
         bytes,
         bytes_total: None,
+        detail: Some(format!(
+            "{} ({}/{})",
+            match update.kind {
+                GitProgressKind::Transfer => "Receiving objects",
+                GitProgressKind::Checkout => "Writing files",
+            },
+            update.current,
+            update.total
+        )),
     })
 }
 
@@ -704,6 +762,12 @@ mod tests {
         git(repository, &["config", "user.name", "Tests"]);
     }
 
+    fn repository_url(repository: &Path) -> String {
+        reqwest::Url::from_file_path(repository)
+            .unwrap()
+            .to_string()
+    }
+
     fn commit(repository: &Path) {
         git(repository, &["add", "."]);
         git(repository, &["commit", "-m", "skills"]);
@@ -719,7 +783,7 @@ mod tests {
         commit(repository.path());
 
         let downloaded = download_repository(
-            repository.path().to_str().unwrap(),
+            &repository_url(repository.path()),
             "skills/one",
             &ProxySettings::default(),
             staging.path(),
@@ -743,7 +807,7 @@ mod tests {
         commit(repository.path());
 
         let downloaded = download_repository(
-            repository.path().to_str().unwrap(),
+            &repository_url(repository.path()),
             "find-skills",
             &ProxySettings::default(),
             staging.path(),
@@ -765,7 +829,7 @@ mod tests {
         commit(repository.path());
 
         let downloaded = download_repository(
-            repository.path().to_str().unwrap(),
+            &repository_url(repository.path()),
             "root-skill",
             &ProxySettings::default(),
             staging.path(),
@@ -787,7 +851,7 @@ mod tests {
         commit(repository.path());
 
         let error = download_repository(
-            repository.path().to_str().unwrap(),
+            &repository_url(repository.path()),
             "duplicate",
             &ProxySettings::default(),
             staging.path(),
@@ -811,7 +875,7 @@ mod tests {
         commit(repository.path());
 
         let error = download_repository(
-            repository.path().to_str().unwrap(),
+            &repository_url(repository.path()),
             "absent",
             &ProxySettings::default(),
             staging.path(),

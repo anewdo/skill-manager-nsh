@@ -31,7 +31,7 @@ struct State {
     snapshots: HashMap<String, OperationSnapshot>,
     controls: HashMap<String, Arc<AtomicBool>>,
     queued: VecDeque<String>,
-    running: Option<String>,
+    running: [Option<String>; 2],
 }
 
 struct Shared {
@@ -41,7 +41,8 @@ struct Shared {
 
 #[derive(Clone)]
 pub struct OperationQueue {
-    sender: mpsc::Sender<QueuedOperation>,
+    transfer_sender: mpsc::Sender<QueuedOperation>,
+    maintenance_sender: mpsc::Sender<QueuedOperation>,
     shared: Arc<Shared>,
 }
 
@@ -54,22 +55,30 @@ pub struct OperationContext {
 
 impl OperationQueue {
     pub fn new() -> Self {
-        let (sender, receiver) = mpsc::channel::<QueuedOperation>();
+        let (transfer_sender, transfer_receiver) = mpsc::channel::<QueuedOperation>();
+        let (maintenance_sender, maintenance_receiver) = mpsc::channel::<QueuedOperation>();
         let (events, _) = broadcast::channel(EVENT_CAPACITY);
         let shared = Arc::new(Shared {
             state: Mutex::new(State::default()),
             events,
         });
-        let worker_shared = shared.clone();
-        thread::Builder::new()
-            .name("skills-manager-operations".to_string())
-            .spawn(move || {
-                while let Ok(operation) = receiver.recv() {
-                    run_operation(&worker_shared, operation);
-                }
-            })
-            .expect("the operation worker thread must be creatable");
-        Self { sender, shared }
+        spawn_worker(
+            "skills-manager-transfers",
+            transfer_receiver,
+            shared.clone(),
+            0,
+        );
+        spawn_worker(
+            "skills-manager-maintenance",
+            maintenance_receiver,
+            shared.clone(),
+            1,
+        );
+        Self {
+            transfer_sender,
+            maintenance_sender,
+            shared,
+        }
     }
 
     pub fn enqueue<T>(
@@ -140,7 +149,12 @@ impl OperationQueue {
         state.controls.insert(id.clone(), control);
         state.queued.push_back(id.clone());
         emit(&self.shared, OperationEventKind::OperationState, snapshot);
-        if self.sender.send(operation).is_err() {
+        let sender = if matches!(kind, OperationKind::Delete | OperationKind::Rename) {
+            &self.maintenance_sender
+        } else {
+            &self.transfer_sender
+        };
+        if sender.send(operation).is_err() {
             state.snapshots.remove(&id);
             state.controls.remove(&id);
             state.queued.retain(|queued| queued != &id);
@@ -158,7 +172,9 @@ impl OperationQueue {
         let state = lock_state(&self.shared);
         state
             .running
-            .as_ref()
+            .iter()
+            .flatten()
+            .next()
             .or_else(|| state.queued.front())
             .and_then(|id| state.snapshots.get(id))
             .cloned()
@@ -266,7 +282,23 @@ impl OperationEvent {
     }
 }
 
-fn run_operation(shared: &Arc<Shared>, operation: QueuedOperation) {
+fn spawn_worker(
+    name: &'static str,
+    receiver: mpsc::Receiver<QueuedOperation>,
+    shared: Arc<Shared>,
+    lane: usize,
+) {
+    thread::Builder::new()
+        .name(name.to_string())
+        .spawn(move || {
+            while let Ok(operation) = receiver.recv() {
+                run_operation(&shared, operation, lane);
+            }
+        })
+        .expect("the operation worker thread must be creatable");
+}
+
+fn run_operation(shared: &Arc<Shared>, operation: QueuedOperation, lane: usize) {
     {
         let mut state = lock_state(shared);
         state.queued.retain(|id| id != &operation.id);
@@ -280,7 +312,7 @@ fn run_operation(shared: &Arc<Shared>, operation: QueuedOperation) {
         if !state.snapshots.contains_key(&operation.id) {
             return;
         }
-        state.running = Some(operation.id.clone());
+        state.running[lane] = Some(operation.id.clone());
         let snapshot = state
             .snapshots
             .get_mut(&operation.id)
@@ -300,7 +332,9 @@ fn run_operation(shared: &Arc<Shared>, operation: QueuedOperation) {
         .unwrap_or_else(|_| Err(AppError::internal("operation panicked")));
 
     let mut state = lock_state(shared);
-    state.running = None;
+    if state.running[lane].as_deref() == Some(operation.id.as_str()) {
+        state.running[lane] = None;
+    }
     let Some(snapshot) = state.snapshots.get_mut(&operation.id) else {
         return;
     };
@@ -362,7 +396,7 @@ pub(crate) fn test_context(cancelled: bool) -> OperationContext {
     let mut state = State::default();
     state.snapshots.insert(id.clone(), snapshot);
     state.controls.insert(id.clone(), control.clone());
-    state.running = Some(id.clone());
+    state.running[0] = Some(id.clone());
     OperationContext {
         id,
         control,
@@ -422,7 +456,7 @@ mod tests {
         started_rx.recv().unwrap();
         for (kind, value) in [
             (OperationKind::ApplyUpdate, "second"),
-            (OperationKind::Rename, "third"),
+            (OperationKind::CheckUpdates, "third"),
         ] {
             let order = order.clone();
             queue
@@ -456,7 +490,7 @@ mod tests {
         let ran = Arc::new(AtomicBool::new(false));
         let job_ran = ran.clone();
         let second = queue
-            .enqueue_value(OperationKind::Delete, move |_| {
+            .enqueue_value(OperationKind::CheckUpdates, move |_| {
                 job_ran.store(true, Ordering::Release);
                 Ok(Value::Null)
             })
@@ -549,5 +583,31 @@ mod tests {
             found |= event.kind == OperationEventKind::InstallationsChanged;
         }
         assert!(found);
+    }
+
+    #[test]
+    fn local_deletes_run_while_a_transfer_is_waiting() {
+        let queue = OperationQueue::new();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let transfer = queue
+            .enqueue_value(OperationKind::Install, move |_| {
+                started_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                Ok(Value::Null)
+            })
+            .unwrap();
+        started_rx.recv().unwrap();
+
+        let deleted = queue
+            .enqueue_value(OperationKind::Delete, |_| Ok(Value::Bool(true)))
+            .unwrap();
+        assert_eq!(
+            wait_terminal(&queue, &deleted).result,
+            Some(Value::Bool(true))
+        );
+
+        release_tx.send(()).unwrap();
+        wait_terminal(&queue, &transfer);
     }
 }

@@ -26,12 +26,13 @@ pub struct DownloadedSkill {
 /// Bytes or entries transferred so far and, when the transport knows it, the
 /// total: progress is a fraction of `total` whenever it is present. `bytes`
 /// carries the transferred amount even when `current` counts objects instead.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct DownloadProgress {
     pub current: u64,
     pub total: Option<u64>,
     pub bytes: Option<u64>,
     pub bytes_total: Option<u64>,
+    pub detail: Option<String>,
 }
 
 /// Watches a running download: `check_cancelled` lets each transfer loop stop
@@ -53,7 +54,7 @@ impl DownloadObserver for OperationContext {
             total: progress.total,
             bytes: progress.bytes,
             bytes_total: progress.bytes_total,
-            detail: None,
+            detail: progress.detail,
             cancellable: true,
         })
     }

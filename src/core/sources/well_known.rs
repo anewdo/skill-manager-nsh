@@ -210,6 +210,7 @@ fn download_v1_entry(
         total: Some(total),
         bytes: None,
         bytes_total: None,
+        detail: None,
     })?;
     for (position, file) in files.iter().enumerate() {
         observer.check_cancelled()?;
@@ -234,6 +235,7 @@ fn download_v1_entry(
             total: Some(total),
             bytes: Some(received),
             bytes_total: None,
+            detail: None,
         })?;
     }
     if !skill_dir.join("SKILL.md").is_file() {
@@ -331,6 +333,7 @@ fn read_response(
             total,
             bytes: Some(0),
             bytes_total: total,
+            detail: None,
         })?;
     }
     let mut bytes = Vec::new();
@@ -355,6 +358,7 @@ fn read_response(
                 total,
                 bytes: Some(bytes.len() as u64),
                 bytes_total: total,
+                detail: None,
             })?;
         }
     }

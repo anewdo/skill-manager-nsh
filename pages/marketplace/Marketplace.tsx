@@ -301,6 +301,29 @@ export function MarketplacePage(props: { store: AppStore }) {
     return unit === 0 ? `${Math.round(value)} B` : `${value.toFixed(1)} ${units[unit]}`;
   }
 
+  function progressDetail(detail: string): string {
+    const simple: Record<string, MessageKey> = {
+      "starting git": "marketplace.queue.gitStarting",
+      "repository metadata": "marketplace.queue.gitMetadata",
+      "selecting skill": "marketplace.queue.gitSelecting",
+      "preparing files": "marketplace.queue.gitPreparing",
+      "reading skill metadata": "marketplace.queue.gitReading",
+    };
+    if (simple[detail] !== undefined) {
+      return text(simple[detail]);
+    }
+    const transfer = /^(Receiving objects|Writing files) \((\d+)\/(\d+)\)$/.exec(detail);
+    if (transfer !== null) {
+      return text(
+        transfer[1] === "Receiving objects"
+          ? "marketplace.queue.gitReceiving"
+          : "marketplace.queue.gitWriting",
+        { current: transfer[2], total: transfer[3] },
+      );
+    }
+    return detail;
+  }
+
   /** The second line of a queue row: transfer numbers while downloading, else the phase. */
   function queueRowDetail(snapshot: OperationSnapshot): string {
     if (snapshot.state === "queued") {
@@ -322,6 +345,9 @@ export function MarketplacePage(props: { store: AppStore }) {
     const percent = progressPercent(progress);
     if (percent !== undefined) {
       parts.push(`${Math.round(percent)}%`);
+    }
+    if (progress.detail !== undefined) {
+      parts.push(progressDetail(progress.detail));
     }
     if (progress.phase === "downloading") {
       const speed = installSpeeds()[snapshot.id];

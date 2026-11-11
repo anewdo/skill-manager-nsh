@@ -1,4 +1,4 @@
-import { Text, View } from "nsh";
+import { Text, View, token } from "nsh";
 import { Button } from "nsh/base";
 import { Icon, type IconColor, type IconName } from "./icon";
 
@@ -37,12 +37,22 @@ export interface SpinnerProps {
 
 /** A continuously rotating arc, used inside busy buttons. */
 export function Spinner(props: SpinnerProps) {
+  const size = props.size ?? 14;
+  const color = token(props.color ?? "muted-foreground");
+
   return (
-    <Icon
-      name="loader"
-      size={props.size ?? 14}
-      color={props.color ?? "muted-foreground"}
-      class="animate-spin"
+    <View
+      class="animate-spin motion-reduce:animate-none"
+      style={{
+        width: size,
+        height: size,
+        borderRadius: size / 2,
+        borderWidth: Math.max(1, size / 8),
+        borderColor: color,
+        borderTopColor: "transparent",
+        transformOrigin: "center",
+        flexShrink: 0,
+      }}
     />
   );
 }
