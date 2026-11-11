@@ -1,6 +1,6 @@
 import { translate, type MessageKey, type MessageParams } from "../../i18n";
 import type { AppStore } from "../../store";
-import type { LocalState, UpdateState } from "../../types";
+import type { LocalState, UpdateState } from "../../lib/types";
 import type { BadgeTone } from "../../components/ui";
 import type { StatusFilter, ViewMode } from "./model";
 

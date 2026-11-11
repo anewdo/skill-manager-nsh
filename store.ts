@@ -1,6 +1,6 @@
 import { computed, setColorScheme, signal, type Signal } from "nsh";
-import * as api from "./api";
-import { conflictInstallationId, describeError, toAppError } from "./errors";
+import * as api from "./lib/api";
+import { conflictInstallationId, describeError, toAppError } from "./lib/errors";
 import { translate, type MessageKey, type MessageParams } from "./i18n";
 import type {
   AppError,
@@ -12,7 +12,7 @@ import type {
   Settings,
   SettingsPatch,
   SkillSource,
-} from "./types";
+} from "./lib/types";
 
 /** One marketplace install the app has started and still tracks. */
 export interface InstallTracker {

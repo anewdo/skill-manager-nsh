@@ -1,6 +1,6 @@
 import { View } from "nsh";
 import { ActionButton, IconButton } from "../../../components/ui";
-import type { Installation } from "../../../types";
+import type { Installation } from "../../../lib/types";
 import type { TextFn } from "../labels";
 import { isUpdateAvailable } from "../model";
 

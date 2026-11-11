@@ -1,4 +1,4 @@
-import type { Installation, MarketplaceSkill, SourceType } from "../../types";
+import type { Installation, MarketplaceSkill, SourceType } from "../../lib/types";
 
 export const PAGE_SIZE = 24;
 export const SEARCH_LIMIT = 60;

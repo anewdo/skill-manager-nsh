@@ -1,4 +1,4 @@
-import type { MessageKey, Translate } from "./i18n";
+import type { MessageKey, Translate } from "../i18n";
 import type { AppError, ErrorCode } from "./types";
 
 const errorCodes: ErrorCode[] = [

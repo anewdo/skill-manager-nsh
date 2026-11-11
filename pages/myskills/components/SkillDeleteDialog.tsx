@@ -1,7 +1,7 @@
 import { Text, View } from "nsh";
 import { Dialog } from "nsh/base";
 import { ActionButton, Banner } from "../../../components/ui";
-import type { Installation } from "../../../types";
+import type { Installation } from "../../../lib/types";
 import type { TextFn } from "../labels";
 
 export interface SkillDeleteDialogProps {

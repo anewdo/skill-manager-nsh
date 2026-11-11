@@ -1,4 +1,4 @@
-import type { Installation, OperationProgress, SkillSource } from "../../types";
+import type { Installation, OperationProgress, SkillSource } from "../../lib/types";
 
 export const PAGE_SIZE = 24;
 export const CARD_COLUMNS = 3;

@@ -1,7 +1,7 @@
 import { Text, View } from "nsh";
 import { Progress } from "nsh/base";
 import { ActionButton } from "../../../components/ui";
-import type { OperationSnapshot } from "../../../types";
+import type { OperationSnapshot } from "../../../lib/types";
 import { progressPercent } from "../model";
 
 export interface SkillProgressBarProps {

@@ -1,8 +1,8 @@
 import { computed, effect, signal } from "nsh";
 import { Scroll, View } from "nsh";
-import * as api from "../../api";
+import * as api from "../../lib/api";
 import { Banner, type BannerTone } from "../../components/ui";
-import { describeError, toAppError } from "../../errors";
+import { describeError, toAppError } from "../../lib/errors";
 import { translate } from "../../i18n";
 import type { AppStore } from "../../store";
 import type {
@@ -14,7 +14,7 @@ import type {
   OperationKind,
   OperationSnapshot,
   UpdateConflictPolicy,
-} from "../../types";
+} from "../../lib/types";
 import {
   clampPage,
   installationById,

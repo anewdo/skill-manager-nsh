@@ -2,16 +2,16 @@ import { Overlay, mount, signal } from "nsh";
 import { Text, View } from "nsh";
 import { Tab, Tabs } from "nsh/base";
 import { Window } from "nsh/desktop";
-import { primaryDisplayWorkArea } from "./api";
+import { primaryDisplayWorkArea } from "./lib/api";
 import { Icon, type IconColor, type IconName } from "./components/icon";
 import { Banner } from "./components/ui";
-import { describeError } from "./errors";
+import { describeError } from "./lib/errors";
 import { translate, type MessageKey } from "./i18n";
 import { MarketplacePage } from "./pages/marketplace/Marketplace";
 import { MySkillsPage } from "./pages/myskills/MySkills";
 import { SettingsPage } from "./pages/settings/Settings";
 import { createAppStore, type AppStore, type ToastTone } from "./store";
-import type { AppError } from "./types";
+import type { AppError } from "./lib/types";
 
 type Page = "marketplace" | "library" | "settings";
 

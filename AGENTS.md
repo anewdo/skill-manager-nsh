@@ -15,7 +15,11 @@
 
 ```text
 App.tsx / App.test.tsx     # nsh UI 入口与测试
-api.ts / types.ts          # 原生 API 类型安全封装与前端 DTO
+store.ts                   # 应用状态与操作跟踪
+lib/                       # api.ts（原生 API 封装）、types.ts（前端 DTO）、errors.ts（错误映射）
+i18n/                      # zh_CN.ts / en.ts 文案表与 index.ts（translate、MessageKey）
+components/                # 通用 UI 组件
+pages/                     # 市场、技能库、设置页面
 nsh.json                   # mixed 工程配置，rust = "."
 Cargo.toml                 # Rust crate 配置
 src/lib.rs                 # native_module 注册；无 src/main.rs
@@ -33,7 +37,7 @@ docs/todo/                 # 后续工作安排
 - 以本机安装的 nsh `0.4.0` 为准
 - 查询 nsh API 或行为时，先读 `docs/NSH-DOCS-LOOKUP.md`；优先 Context7 `/longbridge/nsh`，每项最多 4 次查询，不臆造 API 或文档地址
 - 原生服务通过 `#[module]` 注册；Rust snake\_case 方法会生成 TypeScript camelCase 名称
-- 修改原生接口后同步更新 `api.ts` 和 `types.ts`，运行 `nsh check` 并核对生成声明；`.nsh/types/` 不手工编辑
+- 修改原生接口后同步更新 `lib/api.ts` 和 `lib/types.ts`，运行 `nsh check` 并核对生成声明；`.nsh/types/` 不手工编辑
 - async 原生方法映射为 Promise。只读长任务使用 `nsh_core::prelude::blocking`，写操作统一进入 FIFO `OperationQueue`。
 - Git、HTTP、哈希、ZIP 和批量文件 IO 不得占用 UI 引擎线程；操作事件使用 `Callback<JsonValue>.post(...)`。
 - 原生错误保留 `code`、`message`、`retryable` 和可选 `details`，前端通过字段处理，不解析错误字符串。

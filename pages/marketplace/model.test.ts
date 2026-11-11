@@ -1,5 +1,5 @@
 import { expect, test } from "nsh/test";
-import type { Installation, MarketplaceSkill, SourceType } from "../../types";
+import type { Installation, MarketplaceSkill, SourceType } from "../../lib/types";
 import {
   PAGE_SIZE,
   chunk,

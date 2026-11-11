@@ -1,7 +1,7 @@
 import { Scroll, Text, View } from "nsh";
 import { Dialog, TextView } from "nsh/base";
 import { ActionButton, Banner, IconButton } from "../../../components/ui";
-import type { AppError, Installation, InstallationDetail } from "../../../types";
+import type { AppError, Installation, InstallationDetail } from "../../../lib/types";
 import {
   localStateKeys,
   updateStateKeys,

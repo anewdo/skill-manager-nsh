@@ -1,6 +1,6 @@
 import { Text, View } from "nsh";
 import { Badge } from "../../../components/ui";
-import type { Installation } from "../../../types";
+import type { Installation } from "../../../lib/types";
 import { localStateKeys, localStateTone, updateStateKeys, updateStateTone, type TextFn } from "../labels";
 import { sourceLabel } from "../model";
 import { SelectionCheckbox } from "./SelectionCheckbox";

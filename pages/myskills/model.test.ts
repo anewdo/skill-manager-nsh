@@ -1,5 +1,5 @@
 import { expect, test } from "nsh/test";
-import type { Installation, LocalState, UpdateState } from "../../types";
+import type { Installation, LocalState, UpdateState } from "../../lib/types";
 import {
   allSelected,
   chunkItems,

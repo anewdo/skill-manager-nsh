@@ -1,10 +1,10 @@
 import { computed, effect, signal } from "nsh";
 import { Scroll, Text, View } from "nsh";
 import { Input, Tab, Tabs } from "nsh/base";
-import * as api from "../../api";
+import * as api from "../../lib/api";
 import { Icon, type IconName } from "../../components/icon";
 import { ActionButton, Banner } from "../../components/ui";
-import { describeError, toAppError } from "../../errors";
+import { describeError, toAppError } from "../../lib/errors";
 import { translate, type MessageKey } from "../../i18n";
 import type { AppStore } from "../../store";
 import type {
@@ -15,7 +15,7 @@ import type {
   ProxyMode,
   SettingsPatch,
   Theme,
-} from "../../types";
+} from "../../lib/types";
 
 const languages: Language[] = ["zh_cn", "en"];
 const themes: Theme[] = ["light", "dark", "system"];

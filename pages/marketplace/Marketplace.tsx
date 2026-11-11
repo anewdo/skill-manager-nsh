@@ -1,10 +1,10 @@
 import { cleanup, computed, effect, signal, windowSize } from "nsh";
 import { Scroll, Text, View } from "nsh";
 import { Button, Dialog, Input, Pagination, Popover, Tab, Tabs, TextView } from "nsh/base";
-import * as api from "../../api";
+import * as api from "../../lib/api";
 import { Icon } from "../../components/icon";
 import { ActionButton, Badge, Banner, IconButton, Spinner } from "../../components/ui";
-import { describeError, toAppError } from "../../errors";
+import { describeError, toAppError } from "../../lib/errors";
 import { translate, type MessageKey, type MessageParams } from "../../i18n";
 import type { AppStore, InstallTracker } from "../../store";
 import type {
@@ -14,7 +14,7 @@ import type {
   OperationProgress,
   OperationSnapshot,
   SkillPreview,
-} from "../../types";
+} from "../../lib/types";
 import {
   PAGE_SIZE,
   SEARCH_LIMIT,
