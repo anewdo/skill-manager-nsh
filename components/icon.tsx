@@ -3,15 +3,11 @@ import { Image, token } from "nsh";
 /**
  * The app's icon set. nsh ships no icons, so every icon is embedded here as
  * the body of an SVG: path data from lucide-static v1.70.0 (ISC License).
- * `Icon` draws one through `Image` in the color of a theme token, so icons
- * follow the light and dark themes without extra files.
- *
- * The color is written into the SVG instead of set as the image's
- * `tintColor`: on Windows (nsh 0.4.0) a tinted image inside a dialog that
- * fades out fails the frame with Direct2D error 0x8899001E.
+ * `Icon` draws one through `Image` and recolors it with the image's
+ * `tintColor`, so icons follow the light and dark themes from one source.
  */
 
-/** Marks where an icon is filled; replaced by the icon's color like its stroke. */
+/** Marks the icon's opaque pixels; `tintColor` recolors all of them. */
 const INK = "#000000";
 
 const svg = (body: string): string => body;
@@ -157,20 +153,16 @@ export interface IconProps {
   testID?: string;
 }
 
-const uriCache = new Map<string, string>();
+const uriCache = new Map<IconName, string>();
 
-/** The data URI of an icon drawn in `color` (`#rrggbb` or `#rrggbbaa`). */
-function iconUri(name: IconName, color: string): string {
-  const key = `${name}|${color}`;
-  let uri = uriCache.get(key);
+/** The data URI of an icon as a black template: `tintColor` colors it. */
+function iconUri(name: IconName): string {
+  let uri = uriCache.get(name);
   if (uri === undefined) {
-    const rgb = color.slice(0, 7);
-    const alpha = color.length === 9 ? parseInt(color.slice(7), 16) / 255 : 1;
-    const body = iconSources[name].split(INK).join(rgb);
     uri = `data:image/svg+xml,${encodeURIComponent(
-      `<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='${rgb}' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' opacity='${alpha}'>${body}</svg>`,
+      `<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='${INK}' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>${iconSources[name]}</svg>`,
     )}`;
-    uriCache.set(key, uri);
+    uriCache.set(name, uri);
   }
   return uri;
 }
@@ -178,8 +170,12 @@ function iconUri(name: IconName, color: string): string {
 export function Icon(props: IconProps) {
   return (
     <Image
-      src={iconUri(props.name, token(props.color ?? "muted-foreground"))}
-      style={{ width: props.size ?? 16, height: props.size ?? 16 }}
+      src={iconUri(props.name)}
+      style={{
+        width: props.size ?? 16,
+        height: props.size ?? 16,
+        tintColor: token(props.color ?? "muted-foreground"),
+      }}
       class={props.class}
       accessibilityLabel={props.accessibilityLabel}
       testID={props.testID}

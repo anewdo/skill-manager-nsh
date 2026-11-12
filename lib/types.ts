@@ -188,14 +188,6 @@ export interface CacheClearReport {
   cleared_entries: number;
 }
 
-/** The primary display's work area in points, `y` growing down. */
-export interface DisplayWorkArea {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
 export type ConnectivityTarget = "github" | "skills_sh";
 
 export interface ConnectivityCheck {

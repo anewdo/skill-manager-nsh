@@ -6,7 +6,7 @@
 
 ## 技术栈
 
-- nsh / nsh-core `0.4.0`，TSX 原生 UI，不使用 React、Web DOM 或 Tauri API。
+- nsh / nsh-core `0.5.0`，TSX 原生 UI，不使用 React、Web DOM 或 Tauri API。
 - Rust 2024；`src/api/` 负责 nsh 接口边界，`src/core/` 负责可测试的领域与基础设施逻辑。
 - SQLite（rusqlite）、serde / serde\_json、reqwest、Git CLI、SHA-256、ZIP、tokio broadcast。
 - TypeScript 通过 `nativeModule("skills-manager-nsh/native")` 调用 Rust。
@@ -37,7 +37,8 @@ docs/todo/                 # 后续工作安排
 
 ## nsh 开发注意事项
 
-- 以本机安装的 nsh `0.4.0` 为准
+- 以本机安装的 nsh 版本为准（当前 `0.5.0`）
+- 桌面窗口使用 `0.5.0` 的 `WindowRef` 模型：`Window.get("main")` / `currentWindow()` 取窗口，再用 `setBounds` 调整位置与尺寸；
 - 查询 nsh API 或行为时，先读 `docs/NSH-DOCS-LOOKUP.md`；优先 Context7 `/longbridge/nsh`，每项最多 4 次查询，不臆造 API 或文档地址
 - 原生服务通过 `#[module]` 注册；Rust snake\_case 方法会生成 TypeScript camelCase 名称
 - 修改原生接口后同步更新 `lib/api.ts` 和 `lib/types.ts`，运行 `nsh check` 并核对生成声明；`.nsh/types/` 不手工编辑
@@ -46,6 +47,7 @@ docs/todo/                 # 后续工作安排
 - 原生错误保留 `code`、`message`、`retryable` 和可选 `details`，前端通过字段处理，不解析错误字符串。
 - UI 使用 nsh 组件和 `signal` 响应式模型，不套用 React hooks 或浏览器全局对象。
 - 涉及 UI 的改动必须在 nsh debug 中实际操作黄金路径和边界情况；类型检查和模板测试不能代替功能验收。
+- UI验收测试要么交由用户做, 要么在真实宿主机上跑, 否则会报错
 
 ## UI 约定
 
@@ -83,4 +85,4 @@ nsh test
 
 > 测试尽量仅运行本次改动相关部分而非全量运行
 
-安排后续任务和核对产品范围时读 `docs/plans/2026-11-11-roadmap.md`；评估已实现与未实现边界时读 `docs/progress/` 最新文档。`docs/plans/2026-11-09-marketplace-debug.md` 与 `docs/todo/2026-11-09-next-steps.md` 描述的是合并技能库之前的阶段，其中与路线图冲突的内容以路线图为准。每个路线图阶段完成后在 `docs/progress/` 新增一份总结。
+安排后续任务和核对产品范围时读 `docs/plans/2026-11-11-roadmap.md`；评估已实现与未实现边界时读 `docs/progress/` 最新文档。其它文档与路线图冲突的内容以路线图为准。每个路线图阶段完成后在 `docs/progress/` 新增一份总结。

@@ -38,11 +38,6 @@ impl AppNative {
         crate::core::migrations::LATEST_VERSION
     }
 
-    /// Returns the primary display's work area in points, or null when unknown.
-    pub fn primary_display_work_area() -> std::result::Result<JsonValue, JsError> {
-        to_json(crate::core::display::primary_work_area())
-    }
-
     /// Loads a skills.sh leaderboard from the network.
     pub async fn market_leaderboard(
         kind: String,

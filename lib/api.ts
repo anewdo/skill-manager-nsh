@@ -2,7 +2,6 @@ import { nativeModule } from "nsh";
 import type {
   CacheClearReport,
   ConnectivityCheck,
-  DisplayWorkArea,
   InstalledSkill,
   SkillDetail,
   LeaderboardKind,
@@ -19,7 +18,6 @@ import type {
 interface NativeModules {
   AppNative: {
     schemaVersion(): number;
-    primaryDisplayWorkArea(): unknown;
     marketLeaderboard(kind: string, forceRefresh: boolean): Promise<unknown>;
     marketSearch(query: string, limit: number, forceRefresh: boolean): Promise<unknown>;
     marketPreview(source: unknown): Promise<unknown>;
@@ -46,10 +44,6 @@ const { AppNative } = nativeModule<NativeModules>("skills-manager-nsh/native");
 
 export function schemaVersion(): number {
   return AppNative.schemaVersion();
-}
-
-export function primaryDisplayWorkArea(): DisplayWorkArea | null {
-  return AppNative.primaryDisplayWorkArea() as DisplayWorkArea | null;
 }
 
 export async function marketLeaderboard(

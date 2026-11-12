@@ -1,8 +1,8 @@
 import { mount, signal, View, type JSX } from "nsh";
 import { Scrollbar } from "nsh/base";
-import { Window } from "nsh/desktop";
+import { displays, Window } from "nsh/desktop";
 import { Banner, Notices, ToastHost } from "./components/ui";
-import { primaryDisplayWorkArea } from "./lib/api";
+import { primaryWorkArea, startingWindowBounds } from "./lib/window";
 import { LibraryPage } from "./pages/library/Library";
 import { MarketplacePage } from "./pages/marketplace/Marketplace";
 import { SettingsPage } from "./pages/settings/Settings";
@@ -34,24 +34,13 @@ function PageSlot(props: {
   );
 }
 
-const initialWindowWidth = 1200;
-const initialWindowHeight = 760;
-
 /** Sizes the window and centers it in the primary display's work area. */
 function placeWindow(): void {
-  const area = primaryDisplayWorkArea();
-  if (!area) {
+  const bounds = startingWindowBounds(primaryWorkArea(displays()));
+  if (!bounds) {
     return;
   }
-  const width = Math.min(initialWindowWidth, area.width - 48);
-  const height = Math.min(initialWindowHeight, area.height - 48);
-  Window.setFrame({
-    size: { width, height },
-    origin: {
-      x: Math.round(area.x + (area.width - width) / 2),
-      y: Math.round(area.y + (area.height - height) / 2),
-    },
-  });
+  Window.get("main")?.setBounds(bounds);
 }
 
 /** Thin bars over the content's edge that show while it scrolls or is pointed at. */

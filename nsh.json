@@ -4,5 +4,9 @@
   "version": "1.0.0",
   "build": 1,
   "rust": ".",
-  "theme": "theme.json"
+  "theme": "theme.json",
+  "window": {
+    "defaultSize": { "width": 1200, "height": 760 },
+    "defaultPosition": "center"
+  }
 }
