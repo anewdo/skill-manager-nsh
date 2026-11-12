@@ -33,6 +33,7 @@ export const en: Record<MessageKey, string> = {
   "marketplace.card.install": "Install",
   "marketplace.card.installQueued": "Queued",
   "marketplace.card.installing": "Installing",
+  "marketplace.backToTop": "Back to top",
   "marketplace.preview.title": "Skill preview",
   "marketplace.preview.loading": "Loading…",
   "marketplace.preview.error": "Preview failed",

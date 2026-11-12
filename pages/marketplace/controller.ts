@@ -1,4 +1,4 @@
-import { cleanup, computed, signal } from "nsh";
+import { cleanup, computed, signal, type ListRef, type ScrollEvent } from "nsh";
 import * as api from "../../lib/api";
 import { toAppError } from "../../lib/errors";
 import type { AppError, LeaderboardKind, MarketplaceSkill, SkillPreview } from "../../lib/types";
@@ -13,6 +13,9 @@ import {
 } from "./model";
 
 const SEARCH_DELAY_MS = 350;
+
+/** How far the grid scrolls down before the back-to-top button shows, in points. */
+const BACK_TO_TOP_THRESHOLD = 30;
 
 export type MarketplaceController = ReturnType<typeof createMarketplaceController>;
 
@@ -33,6 +36,9 @@ export function createMarketplaceController(store: AppStore) {
   const previewError = signal<AppError | null>(null);
 
   const avatarFailures = signal<ReadonlySet<string>>(new Set<string>());
+
+  const grid = signal<ListRef | null>(null);
+  const scrolled = signal(false);
 
   const installed = computed(() => installedLineages(store.skills()));
   const filtered = computed(() => filterBySource(entries() ?? [], sourceFilter()));
@@ -147,6 +153,23 @@ export function createMarketplaceController(store: AppStore) {
     }
   }
 
+  /** Keeps the grid's ref, so the back-to-top button can scroll it. */
+  function attachGrid(ref: ListRef): void {
+    grid.set(ref);
+  }
+
+  /** Shows the back-to-top button once the grid has scrolled down far enough. */
+  function trackScroll(event: ScrollEvent): void {
+    const past = event.offset.y > BACK_TO_TOP_THRESHOLD;
+    if (past !== scrolled()) {
+      scrolled.set(past);
+    }
+  }
+
+  function scrollToTop(): void {
+    grid()?.scrollToOffset({ offset: 0, animated: true });
+  }
+
   /** Opens the preview of an entry and downloads it: the only place a preview is fetched. */
   async function openPreview(entry: MarketplaceSkill): Promise<void> {
     previewEntry.set(entry);
@@ -207,6 +230,10 @@ export function createMarketplaceController(store: AppStore) {
     hasAvatar,
     avatarUrl,
     avatarFailed,
+    scrolled,
+    attachGrid,
+    trackScroll,
+    scrollToTop,
     previewEntry,
     previewOpen,
     preview,

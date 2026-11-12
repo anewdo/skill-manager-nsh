@@ -29,6 +29,7 @@ nsh 不提供内置图标。项目内所有图标集中定义在 [icon.tsx](../c
 | `rename` | `pencil` | 重命名 |
 | `close` | `x` | 关闭、清空输入 |
 | `chevronLeft` / `chevronRight` | `chevron-left` / `chevron-right` | 翻页 |
+| `arrowUp` | `arrow-up` | 回到顶部 |
 | `list` | `list` | 列表视图 |
 | `grid` | `layout-grid` | 卡片视图 |
 | `check` | `check` | 选中、成功 |

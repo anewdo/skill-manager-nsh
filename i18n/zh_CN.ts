@@ -31,6 +31,7 @@ export const zhCN = {
   "marketplace.card.install": "安装",
   "marketplace.card.installQueued": "排队中",
   "marketplace.card.installing": "安装中",
+  "marketplace.backToTop": "回到顶部",
   "marketplace.preview.title": "Skill 预览",
   "marketplace.preview.loading": "正在加载…",
   "marketplace.preview.error": "预览失败",

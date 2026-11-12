@@ -3,6 +3,7 @@ import {
   Banner,
   Button,
   EmptyState,
+  FloatingButton,
   Label,
   LoadingState,
   Notices,
@@ -141,27 +142,42 @@ export function MarketplacePage(props: { store: AppStore }) {
 
       <If when={c.filtered().length > 0}>
         {() => (
-          <List<MarketplaceSkill>
-            each={c.filtered()}
-            numColumns={gridColumnsFor(windowSize().width)}
-            estimatedItemSize={104}
-            class="flex-1"
-            contentClass="gap-3 px-6 pb-6"
-            testID="marketplace-grid"
-          >
-            {(entry) => (
-              <MarketCard
-                entry={entry()}
-                status={c.status(entry())}
-                hasAvatar={c.hasAvatar(entry())}
-                avatarUrl={c.avatarUrl(entry())}
-                text={text}
-                onAvatarError={() => c.avatarFailed(entry())}
-                onPreview={(item) => void c.openPreview(item)}
-                onInstall={c.install}
-              />
-            )}
-          </List>
+          <View class="relative flex-1">
+            <List<MarketplaceSkill>
+              each={c.filtered()}
+              numColumns={gridColumnsFor(windowSize().width)}
+              estimatedItemSize={104}
+              class="flex-1"
+              contentClass="gap-3 px-6 pb-6"
+              ref={c.attachGrid}
+              onScroll={c.trackScroll}
+              testID="marketplace-grid"
+            >
+              {(entry) => (
+                <MarketCard
+                  entry={entry()}
+                  status={c.status(entry())}
+                  hasAvatar={c.hasAvatar(entry())}
+                  avatarUrl={c.avatarUrl(entry())}
+                  text={text}
+                  onAvatarError={() => c.avatarFailed(entry())}
+                  onPreview={(item) => void c.openPreview(item)}
+                  onInstall={c.install}
+                />
+              )}
+            </List>
+            <If when={c.scrolled()}>
+              {() => (
+                <FloatingButton
+                  icon="arrowUp"
+                  label={text("marketplace.backToTop")}
+                  class="absolute right-6 bottom-6"
+                  onPress={c.scrollToTop}
+                  testID="marketplace-back-to-top"
+                />
+              )}
+            </If>
+          </View>
         )}
       </If>
 

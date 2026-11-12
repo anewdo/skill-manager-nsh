@@ -1,5 +1,5 @@
-import { Scroll } from "nsh";
-import { Banner, Button, Label, LoadingState, Markdown, Modal } from "../../../components/ui";
+import { Scroll, View } from "nsh";
+import { Banner, Button, Card, Label, LoadingState, Markdown, Modal } from "../../../components/ui";
 import { skillBody } from "../../../lib/format";
 import type { AppStore } from "../../../store";
 import type { MarketplaceController } from "../controller";
@@ -63,7 +63,9 @@ export function PreviewModal(props: { store: AppStore; controller: MarketplaceCo
             <Label tone="muted">
               {result().description || text("marketplace.preview.noDescription")}
             </Label>
-            <Markdown source={skillBody(result().skill_md)} />
+            <Card class="p-4">
+              <Markdown source={skillBody(result().skill_md)} />
+            </Card>
           </Scroll>
         )}
       </If>

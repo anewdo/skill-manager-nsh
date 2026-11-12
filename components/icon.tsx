@@ -80,6 +80,7 @@ const iconSources = {
   close: svg(`<path d="M18 6 6 18"/>` + `<path d="m6 6 12 12"/>`),
   chevronLeft: svg(`<path d="m15 18-6-6 6-6"/>`),
   chevronRight: svg(`<path d="m9 18 6-6-6-6"/>`),
+  arrowUp: svg(`<path d="m5 12 7-7 7 7"/>` + `<path d="M12 19V5"/>`),
   list: svg(
     `<path d="M3 5h.01"/>` +
       `<path d="M3 12h.01"/>` +

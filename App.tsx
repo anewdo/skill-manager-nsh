@@ -1,13 +1,16 @@
 import { mount, signal, View, type JSX } from "nsh";
 import { Scrollbar } from "nsh/base";
 import { displays, Window } from "nsh/desktop";
-import { Banner, Notices, ToastHost } from "./components/ui";
+import { Banner, Notices, ToastHost, type ToastPlacement } from "./components/ui";
 import { primaryWorkArea, startingWindowBounds } from "./lib/window";
 import { LibraryPage } from "./pages/library/Library";
 import { MarketplacePage } from "./pages/marketplace/Marketplace";
 import { SettingsPage } from "./pages/settings/Settings";
 import { Sidebar, type PageId } from "./shell/Sidebar";
 import { createAppStore } from "./store";
+
+/** Any of ToastStack's anchors: topRight, bottomRight, bottomCenter, topCenter, ... */
+const TOAST_PLACEMENT: ToastPlacement = "bottomRight";
 
 /**
  * Keeps a page mounted once it has been opened and only hides it afterwards,
@@ -65,8 +68,8 @@ function App() {
   placeWindow();
   useAppScrollbars();
 
-  const page = signal<PageId>("library");
-  const visited = signal<ReadonlySet<PageId>>(new Set<PageId>(["library"]));
+  const page = signal<PageId>("marketplace");
+  const visited = signal<ReadonlySet<PageId>>(new Set<PageId>(["marketplace"]));
   const openPage = (next: PageId): void => {
     if (!visited().has(next)) {
       visited.set(new Set([...visited(), next]));
@@ -112,7 +115,13 @@ function App() {
           {() => <SettingsPage store={store} />}
         </PageSlot>
       </View>
-      <ToastHost toasts={store.toasts()} onDismiss={store.dismissToast} />
+      <ToastHost
+        toasts={store.toasts()}
+        onDismiss={store.dismissToast}
+        placement={TOAST_PLACEMENT}
+        onExpandedChange={store.setToastsExpanded}
+        onCancel={store.dismissNewestToast}
+      />
     </View>
   );
 }

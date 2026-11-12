@@ -141,7 +141,11 @@ export function SkillDetailModal(props: { store: AppStore; controller: LibraryCo
               )}
             </If>
             <If when={value().local.skill_md}>
-              {(markdown) => <Markdown source={skillBody(markdown())} />}
+              {(markdown) => (
+                <Card class="p-4">
+                  <Markdown source={skillBody(markdown())} />
+                </Card>
+              )}
             </If>
             <If
               when={

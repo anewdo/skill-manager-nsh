@@ -125,3 +125,31 @@ export function IconButton(props: IconButtonProps) {
     </BaseButton>
   );
 }
+
+const floatingButtonClass =
+  "h-10 w-10 items-center justify-center rounded-full border border-border bg-card hover:bg-accent active:bg-accent";
+
+export interface FloatingButtonProps {
+  icon: IconName;
+  /** What it does: read by screen readers and shown as its tooltip. */
+  label: string;
+  onPress: () => void;
+  /** Layout classes only, such as where it floats. */
+  class?: string;
+  testID?: string;
+}
+
+/** A round icon button that floats over the content it acts on. */
+export function FloatingButton(props: FloatingButtonProps) {
+  return (
+    <BaseButton
+      class={cx(floatingButtonClass, props.class)}
+      onPress={props.onPress}
+      accessibilityLabel={props.label}
+      tooltip={<Tip text={props.label} />}
+      testID={props.testID}
+    >
+      <Icon name={props.icon} color="foreground" size={18} />
+    </BaseButton>
+  );
+}

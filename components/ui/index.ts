@@ -1,6 +1,12 @@
 export { cx } from "./cx";
 export { Label, Markdown, type LabelTone, type LabelVariant } from "./text";
-export { Button, IconButton, type ButtonSize, type ButtonVariant } from "./button";
+export {
+  Button,
+  FloatingButton,
+  IconButton,
+  type ButtonSize,
+  type ButtonVariant,
+} from "./button";
 export {
   Badge,
   Banner,
@@ -23,4 +29,11 @@ export {
   Toolbar,
 } from "./layout";
 export { Modal, type ModalSize } from "./dialog";
-export { ToastHost, type ToastMessage, type ToastTone } from "./toast";
+export {
+  ToastHost,
+  MAX_TOASTS,
+  TOAST_WIDTH,
+  type ToastMessage,
+  type ToastPlacement,
+  type ToastTone,
+} from "./toast";

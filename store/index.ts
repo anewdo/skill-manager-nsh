@@ -50,7 +50,11 @@ export interface AppStore {
   startInstall(source: SkillSource, label: OperationLabel): void;
   cancelOperation(id: string): void;
   notify(tone: ToastTone, message: string): void;
-  dismissToast(id: number): void;
+  dismissToast(id: string): void;
+  /** Hold the toasts' timeouts while the stack is expanded under the pointer. */
+  setToastsExpanded(expanded: boolean): void;
+  /** Escape or the back button: dismiss the newest toast. */
+  dismissNewestToast(): void;
 }
 
 function isActive(snapshot: OperationSnapshot): boolean {
@@ -300,5 +304,7 @@ export function createAppStore(): AppStore {
     cancelOperation,
     notify: toasts.push,
     dismissToast: toasts.dismiss,
+    setToastsExpanded: toasts.setExpanded,
+    dismissNewestToast: toasts.dismissNewest,
   };
 }
