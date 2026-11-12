@@ -152,8 +152,8 @@ export function Switch(props: SwitchProps) {
       disabled={props.disabled === true}
       onChange={(event) => props.onChange(event.checked)}
       hitSlop={6}
-      trackClass="h-5 w-9 justify-center rounded-full bg-input px-0.5 checked:bg-primary disabled:opacity-50"
-      thumbClass="h-4 w-4 rounded-full bg-card transition-transform duration-150 checked:translate-x-4"
+      trackClass="h-6 w-11 justify-center rounded-full border border-input bg-secondary px-0.5 checked:border-primary checked:bg-primary disabled:opacity-50"
+      thumbClass="h-5 w-5 rounded-full border border-input bg-card transition-transform duration-150 checked:translate-x-4.5"
       accessibilityLabel={props.label}
       testID={props.testID}
     />

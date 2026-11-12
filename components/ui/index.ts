@@ -11,6 +11,16 @@ export {
   type Tone,
 } from "./feedback";
 export { Checkbox, Segmented, Switch, TextField } from "./controls";
-export { Card, Field, ListRow, Notices, Page, PageHeader, Section, Toolbar } from "./layout";
+export {
+  Card,
+  Field,
+  ListRow,
+  Notices,
+  Page,
+  PageHeader,
+  Section,
+  SettingRow,
+  Toolbar,
+} from "./layout";
 export { Modal, type ModalSize } from "./dialog";
 export { ToastHost, type ToastMessage, type ToastTone } from "./toast";

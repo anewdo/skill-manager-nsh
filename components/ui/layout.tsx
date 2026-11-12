@@ -84,29 +84,46 @@ export function ListRow(props: ListRowProps) {
 export interface SectionProps {
   icon: IconName;
   title: string;
-  hint?: string;
   children?: JSX.Element;
 }
 
-/** A titled card grouping the settings of one subject. */
+/** A titled card grouping the rows of one subject. */
 export function Section(props: SectionProps) {
   return (
-    <Card class="gap-4 p-5">
-      <View class="gap-1">
-        <View class="flex-row items-center gap-2">
-          <Icon name={props.icon} color="foreground" />
-          <Label variant="strong">{props.title}</Label>
-        </View>
-        <If when={props.hint}>
-          {(hint) => (
-            <Label variant="caption" tone="muted">
-              {hint()}
-            </Label>
-          )}
-        </If>
+    <Card>
+      <View class="flex-row items-center gap-2 px-5 pt-4 pb-3">
+        <Icon name={props.icon} color="foreground" />
+        <Label variant="strong">{props.title}</Label>
       </View>
       {props.children}
     </Card>
+  );
+}
+
+export interface SettingRowProps {
+  label: string;
+  /** Puts its content under the label instead of at the row's end. */
+  stacked?: boolean;
+  /** Content at the row's end, after its main content. */
+  end?: JSX.Element;
+  children?: JSX.Element;
+}
+
+/** One line of a section: a setting's name and its control, divided from the rows around it. */
+export function SettingRow(props: SettingRowProps) {
+  return (
+    <View
+      class={cx(
+        "border-t border-border px-5 py-3",
+        props.stacked === true ? "gap-2" : "flex-row items-center gap-4",
+      )}
+    >
+      <View class={props.stacked !== true && props.end === undefined ? "flex-1" : undefined}>
+        <Label>{props.label}</Label>
+      </View>
+      {props.children}
+      {props.end}
+    </View>
   );
 }
 
@@ -117,7 +134,7 @@ export interface FieldProps {
   children?: JSX.Element;
 }
 
-/** A labelled value or control: a settings row, a line of a detail list. */
+/** A labelled value or control: a line of a detail list. */
 export function Field(props: FieldProps) {
   return (
     <View class={props.stacked === true ? "gap-1.5" : "flex-row items-center gap-3"}>

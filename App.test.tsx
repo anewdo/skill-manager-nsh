@@ -29,7 +29,7 @@ test("offers the settings that exist and the proxy address only for a custom pro
   const app = await open("./App.tsx", windowOptions);
   await app.waitFor("id:nav-settings");
   await app.press("id:nav-settings");
-  await app.waitFor("id:settings-save-status");
+  await app.waitFor("id:settings-language-zh_cn");
 
   for (const id of [
     "settings-language-zh_cn",

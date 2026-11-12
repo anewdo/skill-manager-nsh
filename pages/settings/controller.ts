@@ -11,8 +11,6 @@ import type {
 } from "../../lib/types";
 import type { AppStore } from "../../store";
 
-export type SaveStatus = "idle" | "saving" | "saved";
-
 export type SettingsController = ReturnType<typeof createSettingsController>;
 
 /** The settings page's state. Every change is saved at once and undone if saving fails. */
@@ -24,7 +22,6 @@ export function createSettingsController(store: AppStore) {
   const proxyMode = signal<ProxyMode>("system");
   const customUrl = signal("");
   const showMarketAvatars = signal(true);
-  const status = signal<SaveStatus>("idle");
   const saveError = signal<string | null>(null);
 
   const dataDir = signal<string | null>(null);
@@ -48,14 +45,11 @@ export function createSettingsController(store: AppStore) {
   });
 
   async function persist(patch: SettingsPatch): Promise<boolean> {
-    status.set("saving");
     saveError.set(null);
     try {
       await store.saveSettings(patch);
-      status.set("saved");
       return true;
     } catch (error) {
-      status.set("idle");
       saveError.set(`${text("settings.saveFailed")}: ${store.errorText(toAppError(error))}`);
       return false;
     }
@@ -156,7 +150,6 @@ export function createSettingsController(store: AppStore) {
     proxyMode,
     customUrl,
     showMarketAvatars,
-    status,
     saveError,
     dismissSaveError: () => saveError.set(null),
     setLanguage,
