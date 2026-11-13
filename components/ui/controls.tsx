@@ -99,6 +99,64 @@ export function Segmented<T extends string>(props: SegmentedProps<T>) {
   );
 }
 
+export interface PageTabsProps<T extends string> {
+  options: readonly T[];
+  value: T;
+  /** The text of a tab; read again when what it reads changes. */
+  label: (option: T) => string;
+  /** The icon at the start of a tab. */
+  icon: (option: T) => IconName;
+  /** The user picked another tab than `value`. */
+  onChange: (option: T) => void;
+  /** Layout classes for the tab bar. */
+  class?: string;
+  /** Each tab's test id is this, a dash and the option. */
+  testID?: string;
+}
+
+/** The tabs that switch a page's sections, the current one marked by an underline. */
+export function PageTabs<T extends string>(props: PageTabsProps<T>) {
+  return (
+    <Tabs class={cx("flex-row gap-6 border-b border-border px-6", props.class)}>
+      <Each of={props.options}>
+        {(option) => (
+          <Tab
+            selected={option() === props.value}
+            onPress={() => {
+              if (option() !== props.value) {
+                props.onChange(option());
+              }
+            }}
+            class="group flex-col items-center gap-2 rounded-md px-2 pt-2"
+            testID={props.testID === undefined ? undefined : `${props.testID}-${option()}`}
+          >
+            <View class="flex-row items-center gap-2">
+              <Icon
+                name={props.icon(option())}
+                size={18}
+                color={option() === props.value ? "primary" : "muted-foreground"}
+              />
+              <Label
+                variant="heading"
+                tone="muted"
+                class="group-selected:text-foreground"
+              >
+                {props.label(option())}
+              </Label>
+            </View>
+            <View
+              class={cx(
+                "h-0.5 w-full rounded-full bg-primary",
+                option() === props.value ? "opacity-100" : "opacity-0",
+              )}
+            />
+          </Tab>
+        )}
+      </Each>
+    </Tabs>
+  );
+}
+
 export interface CheckboxProps {
   checked: boolean;
   /** Neither checked nor unchecked: a "select all" over a partial selection. */

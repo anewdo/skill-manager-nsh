@@ -16,7 +16,7 @@ export {
   Spinner,
   type Tone,
 } from "./feedback";
-export { Checkbox, Segmented, Switch, TextField } from "./controls";
+export { Checkbox, PageTabs, Segmented, Switch, TextField } from "./controls";
 export {
   Card,
   Field,

@@ -25,7 +25,7 @@ _Avoid_: Scoped Name、owner 简写、Installation Lineage
 _Avoid_: 重命名远端 Skill、重新安装、修改 frontmatter
 
 **Skill Source**:
-Skill 的规范化远端出处；同一来源中的同一 Skill 具有稳定身份。
+Skill 的规范化远端出处；同一来源中的同一 Skill 具有稳定身份。不同托管平台、仓库、分支或 Tag、Skill 目录表示不同来源，默认分支的简写与显式地址表示同一来源。
 _Avoid_: 下载地址、安装目录
 
 **Installed Skill**:
@@ -53,7 +53,7 @@ Installed Skill 的当前内容相对 Content Baseline 发生的任何增加、�
 _Avoid_: 更新、未提交更改
 
 **Update**:
-将 Installed Skill 的内容推进到 Skill Source 的较新版本，不隐含覆盖 Local Modification 的权利。
+将 Installed Skill 的内容推进到 Skill Source 的较新版本，不隐含覆盖 Local Modification 的权利。仅远端仓库提交变化而 Skill 内容未变时，不构成 Update。
 _Avoid_: 重新安装、同步
 
 **Preview**:

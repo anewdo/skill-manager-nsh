@@ -215,3 +215,20 @@ export interface SkillPreview {
   revision: string | null;
   digest: string | null;
 }
+
+/** Where a candidate for import was found. */
+export type ImportCandidateOrigin =
+  | { kind: "agent"; agent: string }
+  | { kind: "custom" }
+  | { kind: "repository"; repository: string };
+
+/** One skill a discovery found, before the user picks it for import. */
+export interface ImportCandidate {
+  /** The local path, or `<repository>#<path>` for a repository discovery. */
+  id: string;
+  name: string;
+  description: string | null;
+  origin: ImportCandidateOrigin;
+  /** The absolute path locally, the path inside the repository for a URL import. */
+  path: string;
+}

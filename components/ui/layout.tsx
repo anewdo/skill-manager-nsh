@@ -64,6 +64,8 @@ export function Card(props: CardProps) {
 export interface ListRowProps {
   /** With it the row takes presses and shows it under the pointer. */
   onPress?: () => void;
+  /** Inside another card: a row without a card of its own. */
+  plain?: boolean;
   testID?: string;
   children?: JSX.Element;
 }
@@ -72,7 +74,12 @@ export interface ListRowProps {
 export function ListRow(props: ListRowProps) {
   return (
     <View
-      class="flex-row items-center gap-3 rounded-(--radius) border border-border bg-card px-4 py-2.5 hover:border-input"
+      class={cx(
+        "flex-row items-center gap-3",
+        props.plain === true
+          ? "rounded-md px-2 py-2"
+          : "rounded-(--radius) border border-border bg-card px-4 py-2.5 hover:border-input",
+      )}
       onPress={props.onPress === undefined ? undefined : () => props.onPress?.()}
       testID={props.testID}
     >
