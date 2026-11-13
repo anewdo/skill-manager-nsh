@@ -1,13 +1,14 @@
-import { computed, signal } from "nsh";
-import type { ImportCandidate } from "../../lib/types";
+import { computed, effect, signal } from "nsh";
+import * as api from "../../lib/api";
+import { toAppError } from "../../lib/errors";
+import type {
+  ImportCandidate,
+  LocalDiscovery,
+  LocalImportReport,
+  OperationSnapshot,
+} from "../../lib/types";
 import type { AppStore } from "../../store";
-import { parseRepositoryAddress, groupCandidates } from "./import-model";
-import {
-  mockAgentCandidates,
-  mockFolderCandidates,
-  mockRepositoryCandidates,
-  mockZipCandidates,
-} from "./mock-import";
+import { groupCandidates, localImportRows, summarizeImport } from "./import-model";
 
 export type MarketplaceTab = "square" | "local" | "url";
 
@@ -47,12 +48,19 @@ export function createImportController(store: AppStore) {
   const text = store.text;
   const tab = signal<MarketplaceTab>("square");
 
-  const pickedCandidates = signal<ImportCandidate[]>([]);
+  const localDiscovery = signal<LocalDiscovery>({ candidates: [], sources: [], issues: [] });
   const localSelectedIds = signal<ReadonlySet<string>>(new Set<string>());
-  const localCandidates = computed(() => {
-    const managed = new Set(store.skills().map((skill) => skill.display_name));
-    return [...mockAgentCandidates(managed), ...pickedCandidates()];
+  const localCandidates = computed(() => localDiscovery().candidates);
+  const localLoading = signal(false);
+  const localPendingId = signal<string | null>(null);
+  const localBusy = computed(() => localLoading() || localPendingId() !== null);
+  const localReport = signal<LocalImportReport | null>(null);
+  const localReportOpen = signal(false);
+  const localSummary = computed(() => {
+    const report = localReport();
+    return report === null ? null : summarizeImport(report, text);
   });
+  const localHasZip = computed(() => localDiscovery().sources.some((source) => source.kind === "zip"));
   const localSelected = computed(
     () => localCandidates().filter((candidate) => localSelectedIds().has(candidate.id)).length,
   );
@@ -60,49 +68,61 @@ export function createImportController(store: AppStore) {
   const localSomeSelected = computed(() => someSelected(localCandidates(), localSelectedIds()));
   const localGroups = computed(() => groupCandidates(localCandidates(), text));
   const collapsedGroups = signal<ReadonlySet<string>>(new Set<string>());
-
-  const url = signal("");
-  const urlError = signal<string | null>(null);
-  const urlRepository = signal<string | null>(null);
-  const urlCandidates = signal<ImportCandidate[] | null>(null);
-  const urlSelectedIds = signal<ReadonlySet<string>>(new Set<string>());
-  const urlSelected = computed(
-    () => (urlCandidates() ?? []).filter((candidate) => urlSelectedIds().has(candidate.id)).length,
-  );
-  const urlAllSelected = computed(() =>
-    everySelected(urlCandidates() ?? [], urlSelectedIds()),
-  );
-  const urlSomeSelected = computed(() =>
-    someSelected(urlCandidates() ?? [], urlSelectedIds()),
+  const localRows = computed(() =>
+    localImportRows(localGroups(), collapsedGroups(), localDiscovery()),
   );
 
   function selectTab(next: MarketplaceTab): void {
     tab.set(next);
   }
 
-  function addCandidates(candidates: ImportCandidate[]): void {
-    const known = new Set(localCandidates().map((candidate) => candidate.id));
-    const fresh = candidates.filter((candidate) => !known.has(candidate.id));
-    if (fresh.length > 0) {
-      pickedCandidates.set([...pickedCandidates(), ...fresh]);
+  async function discoverLocal(
+    work: () => Promise<LocalDiscovery | null>,
+    reset = false,
+  ): Promise<void> {
+    if (localBusy()) return;
+    localLoading.set(true);
+    try {
+      const result = await work();
+      if (result === null) return;
+      localDiscovery.set(result);
+      const valid = new Set(result.candidates.map((candidate) => candidate.id));
+      localSelectedIds.set(
+        reset ? new Set<string>() : new Set([...localSelectedIds()].filter((id) => valid.has(id))),
+      );
+      localReport.set(null);
+    } catch (error) {
+      store.notify(
+        "error",
+        `${text("import.local.discoveryFailed")}: ${store.errorText(toAppError(error))}`,
+      );
+    } finally {
+      localLoading.set(false);
     }
   }
 
-  /** Scans the Agent directories again and starts the selection over. */
-  function rescanLocal(): void {
-    pickedCandidates.set([]);
-    localSelectedIds.set(new Set<string>());
-  }
-
   function chooseFolder(): void {
-    addCandidates(mockFolderCandidates());
+    void discoverLocal(() => api.chooseLocalImport("folder"));
   }
 
   function chooseZip(): void {
-    addCandidates(mockZipCandidates());
+    void discoverLocal(() => api.chooseLocalImport("zip"));
+  }
+
+  function dropLocal(paths: string[]): void {
+    void discoverLocal(() => api.discoverLocalImport(paths));
+  }
+
+  function rescanLocal(): void {
+    void discoverLocal(api.rescanLocalImport, true);
+  }
+
+  function discardLocal(): void {
+    void discoverLocal(api.discardLocalImport, true);
   }
 
   function toggleLocal(id: string, checked: boolean): void {
+    if (localBusy()) return;
     localSelectedIds.set(
       checked
         ? addToSelection(localSelectedIds(), id)
@@ -111,6 +131,7 @@ export function createImportController(store: AppStore) {
   }
 
   function toggleAllLocal(checked: boolean): void {
+    if (localBusy()) return;
     localSelectedIds.set(
       checked ? new Set(localCandidates().map((candidate) => candidate.id)) : new Set<string>(),
     );
@@ -126,51 +147,97 @@ export function createImportController(store: AppStore) {
     collapsedGroups.set(next);
   }
 
-  function editUrl(value: string): void {
-    url.set(value);
-    urlError.set(null);
-  }
+  let submitted: ImportCandidate[] = [];
+  let settling = false;
 
-  function discoverUrl(): void {
-    const parsed = parseRepositoryAddress(url());
-    if (parsed === null) {
-      urlError.set(text("import.url.invalid"));
-      urlRepository.set(null);
-      urlCandidates.set(null);
-      return;
-    }
-    urlError.set(null);
-    urlRepository.set(parsed.repository);
-    urlCandidates.set(mockRepositoryCandidates(parsed.repository));
-    urlSelectedIds.set(new Set<string>());
-  }
-
-  function toggleUrl(id: string, checked: boolean): void {
-    urlSelectedIds.set(
-      checked ? addToSelection(urlSelectedIds(), id) : removeFromSelection(urlSelectedIds(), id),
+  async function settleLocal(snapshot: OperationSnapshot): Promise<void> {
+    if (settling) return;
+    settling = true;
+    const report: LocalImportReport = (snapshot.result as LocalImportReport | null) ?? {
+      items: submitted.map((candidate) => ({
+        candidate_id: candidate.id,
+        name: candidate.name,
+        path: candidate.path,
+        status: snapshot.state === "cancelled" ? "cancelled" : "failed",
+        skill: null,
+        error: snapshot.error,
+      })),
+    };
+    localReport.set(report);
+    localSelectedIds.set(new Set<string>());
+    store.notify(
+      report.items.some((item) => item.status === "failed")
+        ? "warning"
+        : report.items.some((item) => item.status === "cancelled") ? "info" : "success",
+      summarizeImport(report, text),
     );
-  }
-
-  function toggleAllUrl(checked: boolean): void {
-    urlSelectedIds.set(
-      checked
-        ? new Set((urlCandidates() ?? []).map((candidate) => candidate.id))
-        : new Set<string>(),
-    );
-  }
-
-  function importSelected(source: "local" | "url"): void {
-    const count = source === "local" ? localSelected() : urlSelected();
-    if (count === 0) {
-      return;
+    try {
+      localDiscovery.set(await api.localImportSnapshot());
+      await store.refreshSkills();
+    } catch (error) {
+      store.notify("error", store.errorText(toAppError(error)));
+    } finally {
+      submitted = [];
+      localPendingId.set(null);
+      settling = false;
     }
-    store.notify("info", text("import.pending"));
+  }
+
+  effect(() => {
+    const id = localPendingId();
+    if (id === null) return;
+    // 同步快照也覆盖任务在订阅事件到达前完成的情况。
+    const snapshot = store.operation(id) ?? api.operationSnapshot(id);
+    if (snapshot !== null && snapshot.state !== "queued" && snapshot.state !== "running") {
+      void settleLocal(snapshot);
+    }
+  });
+
+  effect(() => {
+    const id = localPendingId();
+    if (id === null) return;
+    const timer = setInterval(() => {
+      const snapshot = api.operationSnapshot(id);
+      if (snapshot !== null && snapshot.state !== "queued" && snapshot.state !== "running") {
+        void settleLocal(snapshot);
+      }
+    }, 500);
+    return () => clearInterval(timer);
+  });
+
+  function cancelLocal(): void {
+    const id = localPendingId();
+    if (id !== null) store.cancelOperation(id);
+  }
+
+  function importLocalSelected(): void {
+    if (localBusy() || localSelected() === 0) return;
+    submitted = localCandidates().filter((candidate) => localSelectedIds().has(candidate.id));
+    try {
+      localReport.set(null);
+      localPendingId.set(api.importLocalCandidates(submitted.map((candidate) => candidate.id)));
+    } catch (error) {
+      submitted = [];
+      store.notify(
+        "error",
+        `${text("import.local.submitFailed")}: ${store.errorText(toAppError(error))}`,
+      );
+    }
   }
 
   return {
     tab,
     selectTab,
     localCandidates,
+    localDiscovery,
+    localLoading,
+    localBusy,
+    localPendingId,
+    localReport,
+    localReportOpen,
+    localSummary,
+    localHasZip,
+    localRows,
     localSelectedIds,
     localSelected,
     localAllSelected,
@@ -181,20 +248,11 @@ export function createImportController(store: AppStore) {
     rescanLocal,
     chooseFolder,
     chooseZip,
+    dropLocal,
+    discardLocal,
+    cancelLocal,
     toggleLocal,
     toggleAllLocal,
-    url,
-    urlError,
-    urlRepository,
-    urlCandidates,
-    urlSelectedIds,
-    urlSelected,
-    urlAllSelected,
-    urlSomeSelected,
-    editUrl,
-    discoverUrl,
-    toggleUrl,
-    toggleAllUrl,
-    importSelected,
+    importLocalSelected,
   };
 }

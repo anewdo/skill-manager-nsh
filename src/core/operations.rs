@@ -19,11 +19,12 @@ use super::model::{
 const EVENT_CAPACITY: usize = 256;
 
 type OperationJob = Box<dyn FnOnce(OperationContext) -> Result<Value> + Send + 'static>;
+type PendingJob = Arc<Mutex<Option<OperationJob>>>;
 
 struct QueuedOperation {
     id: String,
     control: Arc<AtomicBool>,
-    job: OperationJob,
+    job: PendingJob,
 }
 
 #[derive(Default)]
@@ -31,6 +32,7 @@ struct State {
     snapshots: HashMap<String, OperationSnapshot>,
     controls: HashMap<String, Arc<AtomicBool>>,
     queued: VecDeque<String>,
+    queued_jobs: HashMap<String, PendingJob>,
     running: [Option<String>; 2],
 }
 
@@ -138,16 +140,18 @@ impl OperationQueue {
             created_at: now,
             updated_at: now,
         };
+        let job: PendingJob = Arc::new(Mutex::new(Some(Box::new(job))));
         let operation = QueuedOperation {
             id: id.clone(),
             control: control.clone(),
-            job: Box::new(job),
+            job: job.clone(),
         };
 
         let mut state = lock_state(&self.shared);
         state.snapshots.insert(id.clone(), snapshot.clone());
         state.controls.insert(id.clone(), control);
         state.queued.push_back(id.clone());
+        state.queued_jobs.insert(id.clone(), job);
         emit(&self.shared, OperationEventKind::OperationState, snapshot);
         let sender = if matches!(kind, OperationKind::Delete | OperationKind::Rename) {
             &self.maintenance_sender
@@ -158,6 +162,7 @@ impl OperationQueue {
             state.snapshots.remove(&id);
             state.controls.remove(&id);
             state.queued.retain(|queued| queued != &id);
+            state.queued_jobs.remove(&id);
             return Err(AppError::internal("operation worker is unavailable"));
         }
         drop(state);
@@ -195,9 +200,16 @@ impl OperationQueue {
             return Ok(current.clone());
         }
         let was_queued = current.state == OperationState::Queued;
-        if was_queued {
+        let cancelled_job = if was_queued {
             state.queued.retain(|queued| queued != id);
-        }
+            state.queued_jobs.remove(id).and_then(|job| {
+                job.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take()
+            })
+        } else {
+            None
+        };
         control.store(true, Ordering::Release);
         let snapshot = state
             .snapshots
@@ -215,6 +227,9 @@ impl OperationQueue {
             OperationEventKind::OperationState,
             snapshot.clone(),
         );
+        drop(state);
+        // 已取消的排队任务立即释放其会话快照和临时资源。
+        drop(cancelled_job);
         Ok(snapshot)
     }
 
@@ -298,6 +313,7 @@ fn run_operation(shared: &Arc<Shared>, operation: QueuedOperation, lane: usize) 
     {
         let mut state = lock_state(shared);
         state.queued.retain(|id| id != &operation.id);
+        state.queued_jobs.remove(&operation.id);
         if state
             .snapshots
             .get(&operation.id)
@@ -324,7 +340,13 @@ fn run_operation(shared: &Arc<Shared>, operation: QueuedOperation, lane: usize) 
         control: operation.control.clone(),
         shared: shared.clone(),
     };
-    let result = catch_unwind(AssertUnwindSafe(|| (operation.job)(context)))
+    let job = operation
+        .job
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take()
+        .expect("a running operation retains its job");
+    let result = catch_unwind(AssertUnwindSafe(|| job(context)))
         .unwrap_or_else(|_| Err(AppError::internal("operation panicked")));
 
     let mut state = lock_state(shared);

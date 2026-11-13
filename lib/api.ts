@@ -1,6 +1,7 @@
 import { nativeModule } from "nsh";
 import type {
   CacheClearReport,
+  LocalDiscovery,
   ConnectivityCheck,
   InstalledSkill,
   SkillDetail,
@@ -18,6 +19,13 @@ import type {
 interface NativeModules {
   AppNative: {
     schemaVersion(): number;
+    chooseLocalImport(kind: string): Promise<unknown>;
+    discoverLocalImport(paths: unknown): Promise<unknown>;
+    rescanLocalImport(): Promise<unknown>;
+    localImportSnapshot(): Promise<unknown>;
+    discardLocalImport(): Promise<unknown>;
+    importLocalCandidates(ids: unknown): unknown;
+    shutdownLocalImport(): Promise<void>;
     marketLeaderboard(kind: string, forceRefresh: boolean): Promise<unknown>;
     marketSearch(query: string, limit: number, forceRefresh: boolean): Promise<unknown>;
     marketPreview(source: unknown): Promise<unknown>;
@@ -41,6 +49,34 @@ interface NativeModules {
 }
 
 const { AppNative } = nativeModule<NativeModules>("skills-manager-nsh/native");
+
+export async function chooseLocalImport(kind: "folder" | "zip"): Promise<LocalDiscovery | null> {
+  return await AppNative.chooseLocalImport(kind) as LocalDiscovery | null;
+}
+
+export async function discoverLocalImport(paths: string[]): Promise<LocalDiscovery> {
+  return await AppNative.discoverLocalImport(paths) as LocalDiscovery;
+}
+
+export async function rescanLocalImport(): Promise<LocalDiscovery> {
+  return await AppNative.rescanLocalImport() as LocalDiscovery;
+}
+
+export async function localImportSnapshot(): Promise<LocalDiscovery> {
+  return await AppNative.localImportSnapshot() as LocalDiscovery;
+}
+
+export async function discardLocalImport(): Promise<LocalDiscovery> {
+  return await AppNative.discardLocalImport() as LocalDiscovery;
+}
+
+export function importLocalCandidates(ids: string[]): string {
+  return AppNative.importLocalCandidates(ids) as string;
+}
+
+export async function shutdownLocalImport(): Promise<void> {
+  return await AppNative.shutdownLocalImport();
+}
 
 export function schemaVersion(): number {
   return AppNative.schemaVersion();

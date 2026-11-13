@@ -390,7 +390,11 @@ fn verify_digest(bytes: &[u8], expected: &str) -> Result<()> {
     Ok(())
 }
 
-fn extract_zip(bytes: &[u8], destination: &Path, observer: &dyn DownloadObserver) -> Result<()> {
+pub(crate) fn extract_zip(
+    bytes: &[u8],
+    destination: &Path,
+    observer: &dyn DownloadObserver,
+) -> Result<()> {
     extract_zip_with_limits(
         bytes,
         destination,
@@ -577,7 +581,7 @@ fn u32_at(bytes: &[u8], offset: usize) -> Option<u32> {
     ))
 }
 
-fn safe_relative_path(path: &str) -> Result<&Path> {
+pub(crate) fn safe_relative_path(path: &str) -> Result<&Path> {
     if path.is_empty()
         || path.len() > MAX_PATH_BYTES
         || path.contains(['\\', ':'])

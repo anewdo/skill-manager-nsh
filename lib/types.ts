@@ -5,6 +5,7 @@ export type UpdateConflictPolicy = "reject" | "overwrite";
 export type OperationState = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 export type OperationKind =
   | "install"
+  | "import_local"
   | "check_updates"
   | "apply_update"
   | "delete"
@@ -217,18 +218,48 @@ export interface SkillPreview {
 }
 
 /** Where a candidate for import was found. */
-export type ImportCandidateOrigin =
-  | { kind: "agent"; agent: string }
-  | { kind: "custom" }
-  | { kind: "repository"; repository: string };
+export type ImportCandidateOrigin = {
+  kind: "folder" | "zip";
+  source_id: string;
+  label: string;
+};
 
 /** One skill a discovery found, before the user picks it for import. */
 export interface ImportCandidate {
-  /** The local path, or `<repository>#<path>` for a repository discovery. */
+  /** 后端发现会话中的候选标识。 */
   id: string;
   name: string;
   description: string | null;
   origin: ImportCandidateOrigin;
-  /** The absolute path locally, the path inside the repository for a URL import. */
+  /** 文件夹绝对路径或包含归档内位置的 ZIP 展示路径。 */
   path: string;
+}
+
+export interface LocalImportSource {
+  id: string;
+  path: string;
+  kind: "folder" | "zip";
+  status: "ready" | "empty" | "invalid" | "failed";
+  candidate_count: number;
+}
+
+export interface LocalDiscovery {
+  candidates: ImportCandidate[];
+  sources: LocalImportSource[];
+  issues: { path: string; error: AppError }[];
+}
+
+export type ImportStatus = "added" | "existing" | "failed" | "cancelled";
+
+export interface LocalImportItem {
+  candidate_id: string;
+  name: string;
+  path: string;
+  status: ImportStatus;
+  skill: InstalledSkill | null;
+  error: AppError | null;
+}
+
+export interface LocalImportReport {
+  items: LocalImportItem[];
 }

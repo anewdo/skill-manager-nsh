@@ -3,6 +3,7 @@ import { formatBytes, progressPercent } from "./format";
 import type { OperationKind, OperationSnapshot } from "./types";
 
 const kindKeys: Record<Exclude<OperationKind, "install">, MessageKey> = {
+  import_local: "operation.kind.import_local",
   check_updates: "operation.kind.check_updates",
   apply_update: "operation.kind.apply_update",
   delete: "operation.kind.delete",
@@ -10,6 +11,7 @@ const kindKeys: Record<Exclude<OperationKind, "install">, MessageKey> = {
 };
 
 const phaseKeys: Record<string, MessageKey> = {
+  copying: "operation.phase.copying",
   downloading: "operation.phase.downloading",
   validating: "operation.phase.validating",
   installing: "operation.phase.installing",

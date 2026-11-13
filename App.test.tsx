@@ -32,12 +32,12 @@ test("switches the download page between its three tabs", async () => {
   await app.waitFor("id:marketplace-tab-square");
 
   await app.press("id:marketplace-tab-local");
-  await app.waitFor("id:import-local-list");
+  await app.waitFor("id:import-local-drop");
   expect(app.shows("id:import-local-folder")).toBe(true);
 
   await app.press("id:marketplace-tab-url");
-  await app.waitFor("id:import-url-input");
-  expect(app.shows("id:import-local-list")).toBe(false);
+  await app.waitFor("id:import-url-unavailable");
+  expect(app.shows("id:import-local-drop")).toBe(false);
 });
 
 test("offers the settings that exist and the proxy address only for a custom proxy", async () => {

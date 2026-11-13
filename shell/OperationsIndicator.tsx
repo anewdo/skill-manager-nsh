@@ -8,7 +8,7 @@ import { OperationRow } from "./OperationRow";
 
 /**
  * The app-wide view of work in progress, at the foot of the sidebar: the
- * download queue (running, queued and failed installs) and the library
+ * task queue (running, queued and failed installs/imports) and the library
  * operation running now. It shows only while there is something to show.
  */
 export function OperationsIndicator(props: { store: AppStore }) {
@@ -18,7 +18,9 @@ export function OperationsIndicator(props: { store: AppStore }) {
   const rows = computed<OperationSnapshot[]>(() => {
     const queue = props.store.downloads.queue();
     const active = props.store.activeOperation();
-    return active !== null && active.kind !== "install" ? [active, ...queue] : queue;
+    return active !== null && !queue.some((row) => row.id === active.id)
+      ? [active, ...queue]
+      : queue;
   });
   const running = computed(() => rows().some((row) => row.state !== "failed"));
   const hasFailed = computed(() => rows().some((row) => row.state === "failed"));

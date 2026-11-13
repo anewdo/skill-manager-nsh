@@ -241,7 +241,7 @@ export function MarketplacePage(props: { store: AppStore }) {
       </If>
 
       <If when={imp.tab() === "url"}>
-        {() => <UrlImportPanel store={props.store} controller={imp} />}
+        {() => <UrlImportPanel store={props.store} />}
       </If>
 
       <PreviewModal store={props.store} controller={c} />

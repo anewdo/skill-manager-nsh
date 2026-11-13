@@ -13,6 +13,7 @@ dirs = "6"
 hex = "0.4"
 nsh-core = "0.5.0"
 regex = "1"
+rfd = { version = "0.15.4", default-features = false }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "system-proxy"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
@@ -24,3 +25,6 @@ tokio = { version = "1", features = ["sync"] }
 uuid = { version = "1", features = ["v4"] }
 walkdir = "2.5"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[target.'cfg(windows)'.dev-dependencies]
+junction = "2.1"

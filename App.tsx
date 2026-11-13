@@ -1,6 +1,7 @@
 import { mount, signal, View, type JSX } from "nsh";
 import { Scrollbar } from "nsh/base";
-import { displays, Window } from "nsh/desktop";
+import { Application, displays, Window } from "nsh/desktop";
+import { shutdownLocalImport } from "./lib/api";
 import { Banner, Notices, ToastHost, type ToastPlacement } from "./components/ui";
 import { primaryWorkArea, startingWindowBounds } from "./lib/window";
 import { LibraryPage } from "./pages/library/Library";
@@ -65,6 +66,7 @@ function useAppScrollbars(): void {
 function App() {
   const store = createAppStore();
   store.start();
+  Application.on("quit", () => shutdownLocalImport());
   placeWindow();
   useAppScrollbars();
 

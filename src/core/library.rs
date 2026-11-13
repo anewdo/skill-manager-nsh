@@ -69,32 +69,80 @@ fn install_with_download(
     context.progress(progress("downloading", true))?;
     let downloaded = download()?;
     context.progress(progress("validating", true))?;
+    let outcome = commit_prepared(
+        repo,
+        store,
+        &downloaded,
+        Some(source),
+        context,
+        progress("installing", false),
+    )?;
+    Ok((outcome.skill, outcome.unmanaged_copy))
+}
+
+pub(crate) struct CommitOutcome {
+    pub skill: InstalledSkill,
+    pub reused: bool,
+    pub unmanaged_copy: Option<String>,
+}
+
+pub(crate) fn commit_prepared(
+    repo: &CentralRepo,
+    store: &Store,
+    downloaded: &DownloadedSkill,
+    source: Option<SkillSource>,
+    context: &OperationContext,
+    commit_progress: OperationProgress,
+) -> Result<CommitOutcome> {
+    context.check_cancelled()?;
     let hash = content_hash(&downloaded.skill_root)?;
 
     let mut existing = store.list_skills()?;
-    reject_existing_lineage(&existing, &source)?;
+    if let Some(source) = &source {
+        reject_existing_lineage(&existing, source)?;
+    }
 
     let skill_name = downloaded.metadata.name.clone();
-    let mut source = source;
-    source.digest = downloaded.digest.clone();
+    let source = source.map(|mut source| {
+        source.digest = downloaded.digest.clone();
+        source
+    });
     if let Some(skill) = find_identical(repo, &existing, &downloaded.skill_root, &hash)? {
-        return Ok((skill, None));
+        context.check_cancelled()?;
+        return Ok(CommitOutcome {
+            skill,
+            reused: true,
+            unmanaged_copy: None,
+        });
     }
     let (unmanaged, occupied) =
         inspect_library_roots(repo, &existing, &skill_name, &downloaded.skill_root, &hash)?;
     if let Some(adoptable) = unmanaged.iter().find(|root| root.identical) {
-        let skill =
-            adopt_unmanaged_root(store, adoptable, &skill_name, &downloaded, &source, &hash)?;
+        context.progress(commit_progress)?;
+        let skill = adopt_unmanaged_root(
+            store,
+            adoptable,
+            &skill_name,
+            downloaded,
+            source.as_ref(),
+            &hash,
+        )?;
         context.library_changed();
-        return Ok((skill, None));
+        return Ok(CommitOutcome {
+            skill,
+            reused: false,
+            unmanaged_copy: None,
+        });
     }
     let unmanaged_copy = unmanaged.first().map(|root| root.name.clone());
 
     let relative_root = allocate_name(&skill_name, &occupied)?;
-    context.progress(progress("installing", false))?;
+    context.progress(commit_progress)?;
 
     existing = store.list_skills()?;
-    reject_existing_lineage(&existing, &source)?;
+    if let Some(source) = &source {
+        reject_existing_lineage(&existing, source)?;
+    }
     let final_root_key = root_key(&relative_root);
     if existing
         .iter()
@@ -124,7 +172,7 @@ fn install_with_download(
         display_name: downloaded.metadata.name.clone(),
         root_relpath: relative_root,
         root_key: final_root_key,
-        source: Some(source),
+        source,
         installed_revision: downloaded.revision.clone(),
         remote_revision: None,
         baseline_hash: Some(hash.clone()),
@@ -148,7 +196,11 @@ fn install_with_download(
     }
 
     context.library_changed();
-    Ok((skill, unmanaged_copy))
+    Ok(CommitOutcome {
+        skill,
+        reused: false,
+        unmanaged_copy,
+    })
 }
 
 /// Takes an unmanaged library directory into the database when its files
@@ -158,7 +210,7 @@ fn adopt_unmanaged_root(
     root: &UnmanagedRoot,
     skill_name: &str,
     downloaded: &DownloadedSkill,
-    source: &SkillSource,
+    source: Option<&SkillSource>,
     hash: &str,
 ) -> Result<InstalledSkill> {
     let now = Utc::now().timestamp_millis();
@@ -167,7 +219,7 @@ fn adopt_unmanaged_root(
         display_name: skill_name.to_string(),
         root_relpath: root.name.clone(),
         root_key: root_key(&root.name),
-        source: Some(source.clone()),
+        source: source.cloned(),
         installed_revision: downloaded.revision.clone(),
         remote_revision: None,
         baseline_hash: Some(hash.to_string()),

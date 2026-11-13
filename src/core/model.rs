@@ -85,6 +85,7 @@ pub enum OperationState {
 #[serde(rename_all = "snake_case")]
 pub enum OperationKind {
     Install,
+    ImportLocal,
     CheckUpdates,
     ApplyUpdate,
     Delete,

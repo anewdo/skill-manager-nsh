@@ -8,7 +8,7 @@ const SPEED_STALE_MS = 3000;
 const SPEED_TICK_MS = 500;
 
 export interface Downloads {
-  /** The installs the queue shows: the running one, then queued, then failed. */
+  /** 安装与本地导入任务，依次显示运行中、排队中和失败项。 */
   readonly queue: () => OperationSnapshot[];
   /** Transferred bytes per second of the operations a sample pair covers. */
   readonly speeds: Signal<Record<string, number>>;
@@ -18,9 +18,9 @@ export interface Downloads {
   sample(snapshot: OperationSnapshot): void;
   /** Drops the samples of an operation that ended. */
   forget(id: string): void;
-  /** Hides a failed install from the queue. */
+  /** 从队列隐藏失败任务。 */
   dismiss(id: string): void;
-  /** Hides every failed install from the queue. */
+  /** 从队列隐藏全部失败任务。 */
   clearFailed(): void;
 }
 
@@ -33,17 +33,17 @@ function sameRates(left: Record<string, number>, right: Record<string, number>):
 export function createDownloads(
   operations: () => Record<string, OperationSnapshot>,
 ): Downloads {
-  /** Failed installs the user closed, hidden from the queue from then on. */
+  /** 用户已关闭的失败任务。 */
   const dismissed = signal<Record<string, true>>({});
   const speeds = signal<Record<string, number>>({});
   const samples = new Map<string, { at: number; bytes: number }[]>();
 
   const queue = computed<OperationSnapshot[]>(() => {
     const hidden = dismissed();
-    const installs = Object.values(operations()).filter(
-      (snapshot) => snapshot.kind === "install",
+    const tasks = Object.values(operations()).filter(
+      (snapshot) => snapshot.kind === "install" || snapshot.kind === "import_local",
     );
-    const active = installs
+    const active = tasks
       .filter((snapshot) => snapshot.state === "queued" || snapshot.state === "running")
       .sort((left, right) => {
         if (left.state !== right.state) {
@@ -51,7 +51,7 @@ export function createDownloads(
         }
         return left.created_at - right.created_at;
       });
-    const failed = installs
+    const failed = tasks
       .filter((snapshot) => snapshot.state === "failed" && hidden[snapshot.id] !== true)
       .sort((left, right) => left.updated_at - right.updated_at);
     return [...active, ...failed];

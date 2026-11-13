@@ -2,7 +2,6 @@ import { View } from "nsh";
 import { Badge, Checkbox, Label, ListRow } from "../../../components/ui";
 import type { ImportCandidate } from "../../../lib/types";
 import type { TextFn } from "../../../store";
-import { candidateOriginLabel } from "../import-model";
 
 export interface ImportCandidateRowProps {
   candidate: ImportCandidate;
@@ -10,15 +9,17 @@ export interface ImportCandidateRowProps {
   text: TextFn;
   /** Inside a group card: the row gives up its own card. */
   plain?: boolean;
+  disabled?: boolean;
   onToggle: (checked: boolean) => void;
 }
 
-/** One discovered skill, shared by the local and URL import tabs. */
+/** 本地发现的一项 Skill。 */
 export function ImportCandidateRow(props: ImportCandidateRowProps) {
   return (
     <ListRow plain={props.plain}>
       <Checkbox
         checked={props.selected}
+        disabled={props.disabled}
         label={props.candidate.name}
         onChange={props.onToggle}
         testID={`import-select-${props.candidate.name}`}
@@ -28,7 +29,7 @@ export function ImportCandidateRow(props: ImportCandidateRowProps) {
           <Label variant="strong" lines={1} class="flex-1">
             {props.candidate.name}
           </Label>
-          <Badge label={candidateOriginLabel(props.candidate.origin, props.text)} />
+          <Badge label={props.text("import.origin.custom")} />
         </View>
         <If when={props.candidate.description}>
           {(description) => (
