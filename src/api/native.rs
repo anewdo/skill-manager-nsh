@@ -237,10 +237,7 @@ impl AppNative {
         .await
     }
 
-    /// Downloads and reads a skill only when the user explicitly requests a preview.
-    ///
-    /// Reopening the same skill within the short preview TTL is served from the
-    /// in-memory cache instead of downloading again.
+    /// 显式预览优先读取已安装文件，未安装项使用短期内存缓存或远端下载。
     pub async fn market_preview(source: JsonValue) -> std::result::Result<JsonValue, JsError> {
         let source: SkillSource = serde_json::from_value(source).map_err(|error| {
             js_error(AppError::invalid_input(format!(

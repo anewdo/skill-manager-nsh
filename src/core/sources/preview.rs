@@ -11,7 +11,7 @@ use super::common::{DownloadedSkill, SilentObserver, canonical_source, download}
 use crate::core::central_repo::CentralRepo;
 use crate::core::error::{AppError, ErrorCode, Result};
 use crate::core::metadata::parse_skill_md_content;
-use crate::core::model::{ProxySettings, SkillSource};
+use crate::core::model::{ProxySettings, SkillSource, SourceType};
 use crate::core::store::Store;
 
 const MAX_SKILL_MD_BYTES: u64 = 1024 * 1024;
@@ -137,7 +137,21 @@ fn local_preview(
     repo: &CentralRepo,
     source: &SkillSource,
 ) -> Result<Option<SkillPreview>> {
-    let Some(skill) = store.skill_by_source(&source.source_key)? else {
+    let skill = store.skill_by_source(&source.source_key)?;
+    let skill = match (
+        skill,
+        source.source_type,
+        source.repository.as_deref(),
+        source.marketplace_skill_id.as_deref(),
+    ) {
+        (None, SourceType::GitHub, Some(repository), Some(id))
+            if source.subpath.is_none() && source.git_ref.is_none() =>
+        {
+            store.skill_by_marketplace_entry(repository, id)?
+        }
+        (skill, ..) => skill,
+    };
+    let Some(skill) = skill else {
         return Ok(None);
     };
     let root = repo.skill_path(&skill.root_relpath)?;
@@ -209,7 +223,7 @@ mod tests {
     use super::*;
     use crate::core::metadata::SkillCandidate;
     use crate::core::metadata::SkillMetadata;
-    use crate::core::sources::skills_sh;
+    use crate::core::sources::{github::input, skills_sh};
 
     #[test]
     fn preview_reads_metadata_and_cleans_the_private_download() {
@@ -376,8 +390,7 @@ mod tests {
         assert!(cache.get(&skill_source("one").source_key).is_none());
     }
 
-    #[test]
-    fn installed_skills_are_previewed_from_the_local_repository() {
+    fn installed_fixture(source: SkillSource) -> (tempfile::TempDir, CentralRepo, Store) {
         let temp = tempfile::tempdir().unwrap();
         let repo = CentralRepo::new(temp.path().join("repo"));
         repo.ensure().unwrap();
@@ -390,7 +403,6 @@ mod tests {
         .unwrap();
 
         let store = Store::in_memory().unwrap();
-        let source = skill_source("demo");
         let now = 1;
         store
             .insert_skill(&InstalledSkill {
@@ -411,6 +423,13 @@ mod tests {
                 last_error: None,
             })
             .unwrap();
+        (temp, repo, store)
+    }
+
+    #[test]
+    fn installed_skills_are_previewed_from_the_local_repository() {
+        let source = skill_source("demo");
+        let (_temp, repo, store) = installed_fixture(source.clone());
 
         let preview = load(
             &PreviewCache::new(),
@@ -427,6 +446,64 @@ mod tests {
         assert_eq!(preview.relative_root, "demo");
         assert_eq!(preview.revision, Some("b".repeat(40)));
         assert_eq!(preview.source, source);
+    }
+
+    #[test]
+    fn installed_marketplace_skills_are_local_after_resolving_the_repository_directory() {
+        let mut installed = input::source("owner/repo", None, "skills/engineering/demo").unwrap();
+        installed.marketplace_skill_id = Some("market-demo".to_string());
+        let (_temp, repo, store) = installed_fixture(installed.clone());
+        let requested = skill_source("market-demo");
+        assert_ne!(requested.source_key, installed.source_key);
+        let preview = local_preview(&store, &repo, &requested)
+            .unwrap()
+            .expect("installed marketplace entry must use local files");
+        assert_eq!(preview.source, installed);
+        assert!(preview.skill_md.ends_with("# Local\n"));
+
+        let cache = PreviewCache::new();
+        cache.insert(requested.source_key.clone(), sample_preview("stale-remote"));
+        let proxy = ProxySettings {
+            mode: crate::core::model::ProxyMode::Custom,
+            custom_url: Some("invalid://proxy".to_string()),
+        };
+        let preview = load(&cache, &store, &repo, requested.clone(), &proxy).unwrap();
+        assert!(preview.skill_md.ends_with("# Local\n"));
+        cache.clear();
+        std::fs::write(
+            repo.skills_root().join("demo/SKILL.md"),
+            "---\nname: demo\ndescription: Edited locally\n---\n# Edited\n",
+        )
+        .unwrap();
+        let preview = load(&cache, &store, &repo, requested, &proxy).unwrap();
+        assert_eq!(preview.description, "Edited locally");
+        assert!(preview.skill_md.ends_with("# Edited\n"));
+    }
+
+    #[test]
+    fn marketplace_local_preview_keeps_repository_entry_and_explicit_target_separate() {
+        let mut installed = input::source("owner/repo", None, "skills/demo").unwrap();
+        installed.marketplace_skill_id = Some("market-demo".to_string());
+        let (_temp, repo, store) = installed_fixture(installed);
+        let other_repository = skills_sh::marketplace_source("other/repo", "market-demo").unwrap();
+        let other_entry = skill_source("other-entry");
+        let mut explicit_path = input::source("owner/repo", None, "skills/other").unwrap();
+        explicit_path.marketplace_skill_id = Some("market-demo".to_string());
+        let mut explicit_ref =
+            input::source("owner/repo", Some("refs/heads/other"), "skills/demo").unwrap();
+        explicit_ref.marketplace_skill_id = Some("market-demo".to_string());
+        for requested in [other_repository, other_entry, explicit_path, explicit_ref] {
+            assert!(local_preview(&store, &repo, &requested).unwrap().is_none());
+        }
+        let mut pinned =
+            input::source("owner/repo", Some("refs/heads/release"), "skills/demo").unwrap();
+        pinned.marketplace_skill_id = Some("market-demo".to_string());
+        let (_temp, repo, store) = installed_fixture(pinned);
+        assert!(
+            local_preview(&store, &repo, &skill_source("market-demo"))
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

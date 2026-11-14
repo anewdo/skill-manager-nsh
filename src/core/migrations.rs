@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use super::error::{AppError, Result};
 
-pub const LATEST_VERSION: u32 = 1;
+pub const LATEST_VERSION: u32 = 2;
 
 pub fn run_migrations(conn: &Connection) -> Result<()> {
     let current: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
@@ -16,10 +16,14 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
     }
 
     conn.execute_batch("BEGIN IMMEDIATE")?;
-    let result = migrate_to_v1(conn).and_then(|()| {
+    let result: Result<()> = (|| {
+        if current == 0 {
+            migrate_to_v1(conn)?;
+        }
+        conn.execute_batch("ALTER TABLE skills ADD COLUMN git_verification TEXT;")?;
         conn.pragma_update(None, "user_version", LATEST_VERSION)?;
         Ok(())
-    });
+    })();
     match result {
         Ok(()) => conn.execute_batch("COMMIT")?,
         Err(error) => {

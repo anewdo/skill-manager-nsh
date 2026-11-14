@@ -17,6 +17,7 @@ pub struct DownloadedSkill {
     pub metadata: SkillMetadata,
     pub revision: Option<String>,
     pub digest: Option<String>,
+    pub git_identity: Option<github::common::GitIdentity>,
 }
 
 /// Bytes or entries transferred so far and, when the transport knows it, the
@@ -98,6 +99,7 @@ impl DownloadedSkill {
             metadata: candidate.metadata,
             revision,
             digest,
+            git_identity: None,
         })
     }
 }

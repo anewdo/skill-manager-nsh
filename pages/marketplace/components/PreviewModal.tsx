@@ -5,7 +5,7 @@ import type { AppStore } from "../../../store";
 import type { MarketplaceController } from "../controller";
 import { InstallButton } from "./MarketCard";
 
-/** The remote content of a Marketplace Entry, fetched because the user asked to see it. */
+/** 用户显式请求的 Skill 预览。 */
 export function PreviewModal(props: { store: AppStore; controller: MarketplaceController }) {
   const text = props.store.text;
   const c = props.controller;

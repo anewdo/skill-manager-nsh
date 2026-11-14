@@ -323,6 +323,8 @@ impl UrlImportBatch {
                     context,
                 )?;
                 prepared.revision = Some(self.snapshot.revision.clone());
+                prepared.git_identity =
+                    Some(self.snapshot.identity(&candidate.path, proxy, context)?);
                 let outcome = commit_prepared(
                     repo,
                     store,

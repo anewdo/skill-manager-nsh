@@ -22,6 +22,55 @@ pub struct RepositorySnapshot {
 pub type DiscoveredMetadata = Vec<(String, Option<SkillMetadata>)>;
 
 impl RepositorySnapshot {
+    pub fn identity(
+        &self,
+        root: &str,
+        proxy: &ProxySettings,
+        observer: &dyn DownloadObserver,
+    ) -> Result<super::common::GitIdentity> {
+        if !root.is_empty() {
+            safe_relative_path(root)?;
+        }
+        let tree = if root.is_empty() {
+            self.git(&["rev-parse", "HEAD^{tree}"], proxy, observer)?
+                .trim()
+                .to_string()
+        } else {
+            let entries = self.git(
+                &[
+                    "--literal-pathspecs",
+                    "ls-tree",
+                    "-d",
+                    "-z",
+                    "HEAD",
+                    "--",
+                    root,
+                ],
+                proxy,
+                observer,
+            )?;
+            entries
+                .split('\0')
+                .filter_map(|entry| entry.split_once('\t'))
+                .find(|(_, path)| *path == root)
+                .and_then(|(header, _)| header.strip_prefix("040000 tree "))
+                .ok_or_else(|| {
+                    AppError::new(
+                        ErrorCode::NotFound,
+                        "the selected skill directory no longer exists",
+                    )
+                    .with_details(serde_json::json!({"reason":"path_not_found"}))
+                })?
+                .to_string()
+        };
+        Ok(super::common::GitIdentity {
+            reference: self.reference.clone(),
+            root: root.to_string(),
+            revision: self.revision.clone(),
+            tree,
+        })
+    }
+
     pub fn discover(
         staging: &Path,
         input: &RepositoryInput,

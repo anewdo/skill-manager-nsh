@@ -75,7 +75,14 @@ fn check_updates_keeps_the_previous_remote_revision_on_failure() {
         "content",
     );
     store
-        .update_update_check("one", Some("previous"), UpdateState::Available, 1, None)
+        .update_update_check(
+            "one",
+            Some("previous"),
+            UpdateState::Available,
+            1,
+            None,
+            None,
+        )
         .unwrap();
 
     check_update_with_download(&store, "one", || {

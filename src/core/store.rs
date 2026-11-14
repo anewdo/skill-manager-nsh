@@ -9,6 +9,7 @@ use super::central_repo::CentralRepo;
 use super::error::{AppError, ErrorCode, Result};
 use super::migrations;
 use super::model::{InstalledSkill, LocalState, Settings, SkillSource, UpdateState};
+use super::sources::github::common::GitVerification;
 
 const SETTINGS_KEY: &str = "app";
 const SKILL_SELECT: &str = "
@@ -55,8 +56,30 @@ impl Store {
     }
 
     pub fn insert_skill(&self, skill: &InstalledSkill) -> Result<()> {
+        self.insert_verified_skill(skill, None)
+    }
+
+    pub fn insert_verified_skill(
+        &self,
+        skill: &InstalledSkill,
+        verification: Option<&GitVerification>,
+    ) -> Result<()> {
         let conn = self.conn()?;
-        insert_skill_on(&conn, skill)
+        insert_skill_on(&conn, skill, verification)
+    }
+
+    pub fn git_verification(&self, id: &str) -> Result<Option<GitVerification>> {
+        let json: Option<String> = self
+            .conn()?
+            .query_row(
+                "SELECT git_verification FROM skills WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        json.map(|json| serde_json::from_str(&json).map_err(AppError::database))
+            .transpose()
     }
 
     pub fn update_local_state(
@@ -105,18 +128,21 @@ impl Store {
         update_state: UpdateState,
         checked_at: i64,
         last_error: Option<&str>,
+        verification: Option<&GitVerification>,
     ) -> Result<()> {
         let affected = self.conn()?.execute(
             "UPDATE skills
              SET remote_revision = ?1, update_state = ?2, update_checked_at = ?3,
-                 last_error = ?4, updated_at = ?3
+                 last_error = ?4, updated_at = ?3,
+                 git_verification = CASE WHEN ?4 IS NULL THEN ?6 ELSE git_verification END
              WHERE id = ?5",
             params![
                 remote_revision,
                 update_state.as_str(),
                 checked_at,
                 last_error,
-                id
+                id,
+                verification.map(serde_json::to_string).transpose()?
             ],
         )?;
         if affected == 0 {
@@ -132,12 +158,14 @@ impl Store {
         remote_revision: Option<&str>,
         content_hash: &str,
         updated_at: i64,
+        verification: Option<&GitVerification>,
     ) -> Result<()> {
         let affected = self.conn()?.execute(
             "UPDATE skills
              SET installed_revision = ?1, remote_revision = ?2, baseline_hash = ?3,
                  current_hash = ?3, local_state = ?4, update_state = ?5,
-                 update_checked_at = ?6, last_error = NULL, updated_at = ?6
+                 update_checked_at = ?6, last_error = NULL, updated_at = ?6,
+                 git_verification = ?8
              WHERE id = ?7",
             params![
                 installed_revision,
@@ -146,7 +174,8 @@ impl Store {
                 LocalState::Clean.as_str(),
                 UpdateState::UpToDate.as_str(),
                 updated_at,
-                id
+                id,
+                verification.map(serde_json::to_string).transpose()?
             ],
         )?;
         if affected == 0 {
@@ -181,6 +210,26 @@ impl Store {
         )
         .optional()
         .map_err(Into::into)
+    }
+
+    pub fn skill_by_marketplace_entry(
+        &self,
+        repository: &str,
+        marketplace_skill_id: &str,
+    ) -> Result<Option<InstalledSkill>> {
+        self.conn()?
+            .query_row(
+                &format!(
+                    "{SKILL_SELECT} WHERE source_type = 'github'
+                AND json_extract(source_json, '$.repository') = ?1
+                AND json_extract(source_json, '$.marketplace_skill_id') = ?2
+                AND json_extract(source_json, '$.git_ref') IS NULL"
+                ),
+                params![repository, marketplace_skill_id],
+                map_skill,
+            )
+            .optional()
+            .map_err(Into::into)
     }
 
     pub fn list_skills(&self) -> Result<Vec<InstalledSkill>> {
@@ -219,17 +268,21 @@ impl Store {
     }
 }
 
-fn insert_skill_on(conn: &Connection, skill: &InstalledSkill) -> Result<()> {
+fn insert_skill_on(
+    conn: &Connection,
+    skill: &InstalledSkill,
+    verification: Option<&GitVerification>,
+) -> Result<()> {
     let (source_type, source_key, source_json) = source_columns(skill.source.as_ref())?;
     conn.execute(
         "INSERT INTO skills (
             id, display_name, root_relpath, root_key,
             source_type, source_key, source_json, installed_revision, remote_revision,
             baseline_hash, current_hash, local_state, update_state, update_checked_at,
-            created_at, updated_at, last_error
+            created_at, updated_at, last_error, git_verification
         ) VALUES (
             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
-            ?11, ?12, ?13, ?14, ?15, ?16, ?17
+            ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18
         )",
         params![
             skill.id,
@@ -249,6 +302,7 @@ fn insert_skill_on(conn: &Connection, skill: &InstalledSkill) -> Result<()> {
             skill.created_at,
             skill.updated_at,
             skill.last_error,
+            verification.map(serde_json::to_string).transpose()?,
         ],
     )?;
     Ok(())
@@ -454,7 +508,14 @@ mod tests {
         store.insert_skill(&original).unwrap();
 
         store
-            .update_update_check("one", Some("remote-rev"), UpdateState::Available, 500, None)
+            .update_update_check(
+                "one",
+                Some("remote-rev"),
+                UpdateState::Available,
+                500,
+                None,
+                None,
+            )
             .unwrap();
         let checked = store.skill("one").unwrap().unwrap();
         assert_eq!(checked.remote_revision.as_deref(), Some("remote-rev"));
@@ -470,6 +531,7 @@ mod tests {
                 UpdateState::CheckFailed,
                 600,
                 Some("offline"),
+                None,
             )
             .unwrap();
         let failed = store.skill("one").unwrap().unwrap();
@@ -477,7 +539,14 @@ mod tests {
         assert_eq!(failed.last_error.as_deref(), Some("offline"));
 
         store
-            .update_skill_after_update("one", Some("remote-rev"), Some("remote-rev"), "next", 700)
+            .update_skill_after_update(
+                "one",
+                Some("remote-rev"),
+                Some("remote-rev"),
+                "next",
+                700,
+                None,
+            )
             .unwrap();
         let updated = store.skill("one").unwrap().unwrap();
         assert_eq!(updated.installed_revision.as_deref(), Some("remote-rev"));
@@ -513,7 +582,7 @@ mod tests {
         );
         assert_eq!(
             store
-                .update_update_check("missing", None, UpdateState::UpToDate, 1, None)
+                .update_update_check("missing", None, UpdateState::UpToDate, 1, None, None)
                 .unwrap_err()
                 .code,
             ErrorCode::NotFound

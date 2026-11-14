@@ -19,6 +19,7 @@ use crate::core::model::{
 use crate::core::naming::{allocate_name, root_key};
 use crate::core::operations::OperationContext;
 use crate::core::sources::common::{DownloadedSkill, canonical_source, download};
+use crate::core::sources::github::common::GitVerification;
 use crate::core::store::Store;
 
 /// An install result plus a note about a same-named copy the app does not manage.
@@ -203,7 +204,9 @@ pub(crate) fn commit_prepared(
         updated_at: now,
         last_error: None,
     };
-    if let Err(error) = store.insert_skill(&skill) {
+    let verification =
+        GitVerification::from_download(&skill, downloaded, skill.baseline_hash.as_deref().unwrap());
+    if let Err(error) = store.insert_verified_skill(&skill, verification.as_ref()) {
         if let Err(rollback_error) = fs::rename(&target, &downloaded.skill_root) {
             return Err(AppError::internal(format!(
                 "database insert failed ({error}); skill rollback failed ({rollback_error}); new files remain at {}",
@@ -250,7 +253,8 @@ fn adopt_unmanaged_root(
         updated_at: now,
         last_error: None,
     };
-    store.insert_skill(&skill)?;
+    let verification = GitVerification::from_download(&skill, downloaded, hash);
+    store.insert_verified_skill(&skill, verification.as_ref())?;
     Ok(skill)
 }
 

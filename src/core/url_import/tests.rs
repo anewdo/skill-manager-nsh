@@ -207,6 +207,11 @@ fn discovery_is_metadata_only_and_import_uses_original_shared_snapshot() {
         "{report:?}"
     );
     let installed = report.items[0].skill.as_ref().unwrap();
+    let verification = store.git_verification(&installed.id).unwrap().unwrap();
+    assert_eq!(verification.identity.reference, "refs/heads/main");
+    assert_eq!(verification.identity.root, "skills/one");
+    assert_eq!(verification.identity.revision, discovery.revision);
+    assert_eq!(verification.baseline_hash, installed.baseline_hash);
     assert_eq!(
         installed.installed_revision.as_ref(),
         Some(&discovery.revision)

@@ -27,13 +27,15 @@ pub fn download(
         .url
         .as_deref()
         .ok_or_else(|| AppError::invalid_input("GitHub source URL is required"))?;
-    let snapshot = super::snapshot::RepositorySnapshot::fetch(
+    let target = super::updates::resolve_target(url, source.git_ref.as_deref(), proxy, observer)?;
+    let mut snapshot = super::snapshot::RepositorySnapshot::fetch(
         staging_dir,
         url,
-        source.git_ref.as_deref().unwrap_or("HEAD"),
+        &target.revision,
         proxy,
         observer,
     )?;
+    snapshot.reference = target.reference;
     let root = match source.subpath.as_deref() {
         Some(path) => path.to_string(),
         None => resolve_skill_root(
@@ -49,7 +51,7 @@ pub fn download(
     prepare_download(&snapshot, &root, staging_dir, proxy, observer)
 }
 
-fn prepare_download(
+pub(crate) fn prepare_download(
     snapshot: &super::snapshot::RepositorySnapshot,
     root: &str,
     staging_dir: &Path,
@@ -62,6 +64,7 @@ fn prepare_download(
     let mut downloaded =
         crate::core::local_import::staging::stage_skill(staging_dir, &target, &metadata, observer)?;
     downloaded.revision = Some(snapshot.revision.clone());
+    downloaded.git_identity = Some(snapshot.identity(root, proxy, observer)?);
     downloaded.relative_root = if root.is_empty() {
         ".".to_string()
     } else {
@@ -86,7 +89,7 @@ fn download_repository(
 
 /// Finds the skill a marketplace entry names: skills.sh identifies a GitHub skill
 /// by its name, which is its SKILL.md `name`, not its path in the repository.
-fn resolve_skill_root(
+pub(crate) fn resolve_skill_root(
     checkout: &Path,
     subpath: &str,
     proxy: &ProxySettings,

@@ -13,6 +13,7 @@ import {
 } from "./model";
 
 const SEARCH_DELAY_MS = 350;
+const PREVIEW_LOADING_DELAY_MS = 150;
 
 /** How far the grid scrolls down before the back-to-top button shows, in points. */
 const BACK_TO_TOP_THRESHOLD = 30;
@@ -47,6 +48,7 @@ export function createMarketplaceController(store: AppStore) {
   let loadSequence = 0;
   let previewSequence = 0;
   let searchTimer: ReturnType<typeof setTimeout> | null = null;
+  let previewTimer: ReturnType<typeof setTimeout> | null = null;
 
   function stopSearchTimer(): void {
     if (searchTimer !== null) {
@@ -170,14 +172,26 @@ export function createMarketplaceController(store: AppStore) {
     grid()?.scrollToOffset({ offset: 0, animated: true });
   }
 
-  /** Opens the preview of an entry and downloads it: the only place a preview is fetched. */
+  function stopPreviewTimer(): void {
+    if (previewTimer !== null) {
+      clearTimeout(previewTimer);
+      previewTimer = null;
+    }
+  }
+
+  /** 显式打开预览，已安装内容由后端读取本地文件。 */
   async function openPreview(entry: MarketplaceSkill): Promise<void> {
+    stopPreviewTimer();
     previewEntry.set(entry);
     previewOpen.set(true);
     preview.set(null);
     previewError.set(null);
     const request = ++previewSequence;
-    previewLoading.set(true);
+    previewLoading.set(false);
+    previewTimer = setTimeout(() => {
+      previewTimer = null;
+      if (request === previewSequence) previewLoading.set(true);
+    }, PREVIEW_LOADING_DELAY_MS);
     try {
       const result = await api.marketPreview(entry.lineage);
       if (request === previewSequence) {
@@ -189,6 +203,7 @@ export function createMarketplaceController(store: AppStore) {
       }
     } finally {
       if (request === previewSequence) {
+        stopPreviewTimer();
         previewLoading.set(false);
       }
     }
@@ -196,6 +211,8 @@ export function createMarketplaceController(store: AppStore) {
 
   function closePreview(): void {
     previewSequence += 1;
+    stopPreviewTimer();
+    previewLoading.set(false);
     previewOpen.set(false);
   }
 
@@ -209,7 +226,11 @@ export function createMarketplaceController(store: AppStore) {
     }
   }
 
-  cleanup(stopSearchTimer);
+  cleanup(() => {
+    stopSearchTimer();
+    stopPreviewTimer();
+    previewSequence += 1;
+  });
   void load(false);
 
   return {
