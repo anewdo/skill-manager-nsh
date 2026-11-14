@@ -41,7 +41,7 @@ export function createDownloads(
   const queue = computed<OperationSnapshot[]>(() => {
     const hidden = dismissed();
     const tasks = Object.values(operations()).filter(
-      (snapshot) => snapshot.kind === "install" || snapshot.kind === "import_local",
+      (snapshot) => snapshot.kind === "install" || snapshot.kind === "import_local" || snapshot.kind === "import_url",
     );
     const active = tasks
       .filter((snapshot) => snapshot.state === "queued" || snapshot.state === "running")

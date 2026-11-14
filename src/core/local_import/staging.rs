@@ -9,26 +9,42 @@ use super::common::{
 };
 use crate::core::central_repo::CentralRepo;
 use crate::core::error::{AppError, ErrorCode, Result};
+use crate::core::metadata::SkillMetadata;
 use crate::core::metadata::{SkillCandidate, relative_path};
 use crate::core::operations::OperationContext;
 use crate::core::skill_path::safe_relative_path;
+use crate::core::sources::common::DownloadObserver;
 use crate::core::sources::common::DownloadedSkill;
+use std::path::Path;
 
 pub(super) fn stage_candidate(
     repo: &CentralRepo,
     candidate: &PendingCandidate,
     context: &OperationContext,
 ) -> Result<DownloadedSkill> {
-    check_ancestors(&candidate.root)?;
-    if !fs::symlink_metadata(&candidate.root)?.is_dir() {
+    stage_skill(
+        &repo.staging_dir(),
+        &candidate.root,
+        &candidate.metadata,
+        context,
+    )
+}
+
+pub(crate) fn stage_skill(
+    staging_dir: &Path,
+    source_root: &Path,
+    expected: &SkillMetadata,
+    context: &dyn DownloadObserver,
+) -> Result<DownloadedSkill> {
+    check_ancestors(source_root)?;
+    if !fs::symlink_metadata(source_root)?.is_dir() {
         return Err(AppError::unsafe_path(
             "candidate root must be a real directory",
         ));
     }
-    if repo
-        .staging_dir()
+    if staging_dir
         .canonicalize()?
-        .starts_with(candidate.root.canonicalize()?)
+        .starts_with(source_root.canonicalize()?)
     {
         return Err(AppError::unsafe_path(
             "candidate contains the application's staging directory",
@@ -36,10 +52,10 @@ pub(super) fn stage_candidate(
     }
     let temp = tempfile::Builder::new()
         .prefix("local-import-")
-        .tempdir_in(repo.staging_dir())?;
+        .tempdir_in(staging_dir)?;
     let root = temp.path().join("skill");
     fs::create_dir(&root)?;
-    let walker = WalkDir::new(&candidate.root)
+    let walker = WalkDir::new(source_root)
         .follow_links(false)
         .into_iter()
         .filter_entry(include_entry);
@@ -58,7 +74,7 @@ pub(super) fn stage_candidate(
         if entry.depth() == 0 {
             continue;
         }
-        let relative = relative_path(&candidate.root, entry.path())?;
+        let relative = relative_path(source_root, entry.path())?;
         let target = root.join(safe_relative_path(&relative)?);
         if metadata.is_dir() {
             fs::create_dir_all(target)?;
@@ -86,12 +102,12 @@ pub(super) fn stage_candidate(
         }
     }
     let metadata = read_metadata(&root)?;
-    if metadata != candidate.metadata {
+    if &metadata != expected {
         return Err(AppError::new(
             ErrorCode::Conflict,
             "candidate metadata changed; rescan and select again",
         )
-        .with_details(serde_json::json!({ "path": candidate.view.path, "rescanRequired": true })));
+        .with_details(serde_json::json!({ "path": source_root.display().to_string(), "rescanRequired": true })));
     }
     let base = temp.path().to_path_buf();
     DownloadedSkill::from_candidate(

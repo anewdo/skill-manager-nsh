@@ -108,10 +108,11 @@ fn github_source(source: &str, skill_id: &str) -> Result<SkillSource> {
     let repository = format!("{owner}/{repository}");
     Ok(SkillSource {
         source_type: SourceType::GitHub,
+        marketplace_skill_id: Some(skill_id.to_string()),
         source_key: format!("github:{repository}/{skill_id}"),
         repository: Some(repository.clone()),
         git_ref: None,
-        subpath: Some(skill_id.to_string()),
+        subpath: None,
         url: Some(format!("https://github.com/{repository}.git")),
         digest: None,
     })
@@ -124,6 +125,7 @@ fn well_known_source(domain: &str, skill_id: &str) -> Result<SkillSource> {
     }
     Ok(SkillSource {
         source_type: SourceType::WellKnown,
+        marketplace_skill_id: None,
         source_key: format!("well_known:{domain}/{skill_id}"),
         repository: None,
         git_ref: None,
@@ -492,7 +494,8 @@ mod tests {
         let github = marketplace_source("Owner/Repo.git", "nested/skill").unwrap();
         assert_eq!(github.source_key, "github:owner/repo/nested/skill");
         assert_eq!(github.repository.as_deref(), Some("owner/repo"));
-        assert_eq!(github.subpath.as_deref(), Some("nested/skill"));
+        assert_eq!(github.subpath, None);
+        assert_eq!(github.marketplace_skill_id.as_deref(), Some("nested/skill"));
         assert_eq!(
             github.url.as_deref(),
             Some("https://github.com/owner/repo.git")

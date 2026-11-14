@@ -6,6 +6,7 @@ export type OperationState = "queued" | "running" | "succeeded" | "failed" | "ca
 export type OperationKind =
   | "install"
   | "import_local"
+  | "import_url"
   | "check_updates"
   | "apply_update"
   | "delete"
@@ -80,6 +81,7 @@ export interface OperationEvent {
 export interface SkillSource {
   source_type: SourceType;
   source_key: string;
+  marketplace_skill_id?: string;
   repository?: string;
   git_ref?: string;
   subpath?: string;
@@ -262,4 +264,22 @@ export interface LocalImportItem {
 
 export interface LocalImportReport {
   items: LocalImportItem[];
+}
+
+export interface UrlCandidate {
+  id: string;
+  name: string;
+  description: string;
+  path: string;
+  source: SkillSource;
+  existing: InstalledSkill | null;
+}
+
+export interface UrlDiscovery {
+  session_id: string;
+  repository: string;
+  git_ref: string;
+  revision: string;
+  candidates: UrlCandidate[];
+  issues: { path: string; error: AppError }[];
 }

@@ -329,6 +329,7 @@ mod tests {
             root_relpath: root_key.to_owned(),
             root_key: root_key.to_owned(),
             source: source_key.map(|key| SkillSource {
+                marketplace_skill_id: None,
                 source_type: SourceType::GitHub,
                 source_key: key.to_owned(),
                 repository: Some("owner/repo".to_owned()),

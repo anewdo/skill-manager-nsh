@@ -78,7 +78,7 @@ pub(super) fn check_updates_with_download(
     Ok(report)
 }
 
-pub(super) fn check_update_with_download(
+pub(crate) fn check_update_with_download(
     store: &Store,
     id: &str,
     download: impl FnOnce() -> Result<DownloadedSkill>,
@@ -149,7 +149,7 @@ pub fn apply_update(
     )
 }
 
-pub(super) fn apply_update_with_download(
+pub(crate) fn apply_update_with_download(
     repo: &CentralRepo,
     store: &Store,
     id: &str,

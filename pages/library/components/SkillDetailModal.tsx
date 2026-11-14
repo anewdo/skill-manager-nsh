@@ -114,6 +114,19 @@ export function SkillDetailModal(props: { store: AppStore; controller: LibraryCo
                   </Field>
                 )}
               </If>
+              <If when={value().skill.source?.source_type === "github"}>
+                {() => <>
+                  <Field label={text("library.detail.reference")}>
+                    <Label class="flex-1" selectable>{value().skill.source?.git_ref ?? text("library.detail.defaultBranch")}</Label>
+                  </Field>
+                  <Field label={text("library.detail.repositoryPath")}>
+                    <Label class="flex-1" selectable>{value().skill.source?.subpath || "/"}</Label>
+                  </Field>
+                  <Field label={text("library.detail.revision")}>
+                    <Label class="flex-1" selectable>{value().skill.installed_revision ?? "—"}</Label>
+                  </Field>
+                </>}
+              </If>
               <Field label={text("library.detail.files")}>
                 <Label class="flex-1">
                   {value().local.file_count === null

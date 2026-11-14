@@ -86,6 +86,7 @@ pub enum OperationState {
 pub enum OperationKind {
     Install,
     ImportLocal,
+    ImportUrl,
     CheckUpdates,
     ApplyUpdate,
     Delete,
@@ -152,10 +153,15 @@ pub struct OperationEvent {
 pub struct SkillSource {
     pub source_type: SourceType,
     pub source_key: String,
+    /// 市场条目标识；实际目录解析后仍保留，用于关联市场安装状态。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub marketplace_skill_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository: Option<String>,
+    /// URL 来源保存完整 refs/heads 或 refs/tags；市场来源为空，跟随当前默认分支。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_ref: Option<String>,
+    /// 已解析的仓库内目录；仓库根为 ""，尚未解析的市场条目为空。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subpath: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

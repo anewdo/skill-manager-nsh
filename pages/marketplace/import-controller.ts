@@ -9,6 +9,7 @@ import type {
 } from "../../lib/types";
 import type { AppStore } from "../../store";
 import { groupCandidates, localImportRows, summarizeImport } from "./import-model";
+import { createUrlImportController } from "./url-import-controller";
 
 export type MarketplaceTab = "square" | "local" | "url";
 
@@ -226,6 +227,7 @@ export function createImportController(store: AppStore) {
   }
 
   return {
+    url: createUrlImportController(store),
     tab,
     selectTab,
     localCandidates,

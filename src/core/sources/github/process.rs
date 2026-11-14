@@ -1,5 +1,5 @@
 use std::ffi::OsString;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::process::{Child, ChildStderr, Command, ExitStatus, Output, Stdio};
 use std::sync::mpsc;
 use std::thread;
@@ -27,6 +27,7 @@ pub(super) fn git_command(proxy: &ProxySettings) -> Result<Command> {
             "http.lowSpeedTime=30",
         ])
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GCM_INTERACTIVE", "never")
         .env("LC_ALL", "C");
     match proxy.mode {
         ProxyMode::System => {}
@@ -61,6 +62,17 @@ pub(super) fn run_git(
     report_progress: bool,
     observer: &dyn DownloadObserver,
 ) -> Result<Output> {
+    run_git_with_input(args, proxy, retryable, report_progress, None, observer)
+}
+
+pub(super) fn run_git_with_input(
+    args: impl IntoIterator<Item = OsString>,
+    proxy: &ProxySettings,
+    retryable: bool,
+    report_progress: bool,
+    input: Option<Vec<u8>>,
+    observer: &dyn DownloadObserver,
+) -> Result<Output> {
     observer.check_cancelled()?;
     if report_progress {
         observer.report(DownloadProgress {
@@ -73,12 +85,26 @@ pub(super) fn run_git(
     }
     let mut child = git_command(proxy)?
         .args(args)
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| git_error(format!("failed to run git: {error}"), false))?;
-    let output = wait_git_child(&mut child, report_progress, observer)?;
+    let writer = input.map(|input| {
+        let mut stdin = child.stdin.take().expect("stdin was piped");
+        thread::spawn(move || {
+            let _ = stdin.write_all(&input);
+        })
+    });
+    let output = wait_git_child(&mut child, report_progress, observer);
+    if let Some(writer) = writer {
+        let _ = writer.join();
+    }
+    let output = output?;
     if output.status.success() {
         return Ok(output);
     }
@@ -155,6 +181,12 @@ pub(super) fn wait_git_child(
         .map_err(|_| AppError::internal("git stderr reader panicked"))?;
     if cancelled {
         return Err(cancelled_error());
+    }
+    while let Ok(update) = progress_receiver.try_recv() {
+        if update.bytes.is_some() {
+            bytes = update.bytes;
+        }
+        report_git_progress(observer, report_progress, update, bytes)?;
     }
     let status = status.expect("the loop only ends with an exit status or a cancellation");
     Ok(Output {
@@ -319,12 +351,64 @@ fn terminate_tree(child: &mut Child) {
 }
 
 pub(super) fn git_error(message: impl Into<String>, retryable: bool) -> AppError {
-    AppError::new(ErrorCode::Git, message).retryable(retryable)
+    let message = message.into();
+    let lower = message.to_ascii_lowercase();
+    let reason = if lower.contains("429") || lower.contains("rate limit") {
+        "rate_limited"
+    } else if lower.contains("repository not found")
+        || lower.contains("does not appear to be a git repository")
+    {
+        "repository_not_found"
+    } else if lower.contains("authentication failed")
+        || lower.contains("could not read username")
+        || lower.contains("403")
+        || lower.contains("401")
+    {
+        "authentication_required"
+    } else if lower.contains("couldn't find remote ref")
+        || lower.contains("not a valid object name")
+    {
+        "reference_not_found"
+    } else {
+        "network"
+    };
+    AppError::new(ErrorCode::Git, message)
+        .retryable(
+            retryable
+                && !matches!(
+                    reason,
+                    "authentication_required" | "repository_not_found" | "reference_not_found"
+                ),
+        )
+        .with_details(serde_json::json!({ "reason": reason }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn git_failures_keep_distinct_reasons_and_retryability() {
+        for (message, reason, retryable) in [
+            ("HTTP 429 rate limit", "rate_limited", true),
+            ("Authentication failed", "authentication_required", false),
+            (
+                "Repository not found; could not read Username",
+                "repository_not_found",
+                false,
+            ),
+            (
+                "couldn't find remote ref refs/heads/missing",
+                "reference_not_found",
+                false,
+            ),
+            ("Could not resolve host", "network", true),
+        ] {
+            let error = git_error(message, true);
+            assert_eq!(error.details.unwrap()["reason"], reason);
+            assert_eq!(error.retryable, retryable);
+        }
+    }
 
     #[test]
     fn parses_git_transfer_progress() {

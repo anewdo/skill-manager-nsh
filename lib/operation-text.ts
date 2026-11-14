@@ -4,6 +4,7 @@ import type { OperationKind, OperationSnapshot } from "./types";
 
 const kindKeys: Record<Exclude<OperationKind, "install">, MessageKey> = {
   import_local: "operation.kind.import_local",
+  import_url: "operation.kind.import_url",
   check_updates: "operation.kind.check_updates",
   apply_update: "operation.kind.apply_update",
   delete: "operation.kind.delete",

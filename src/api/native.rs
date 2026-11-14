@@ -17,6 +17,7 @@ use crate::core::operations::OperationQueue;
 use crate::core::settings;
 use crate::core::sources::{preview, skills_sh::LeaderboardKind};
 use crate::core::store::Store;
+use crate::core::url_import::session::UrlImports;
 
 struct AppState {
     repo: CentralRepo,
@@ -25,6 +26,8 @@ struct AppState {
     preview: preview::PreviewCache,
     local_imports: LocalImports,
     local_operation: Mutex<Option<String>>,
+    url_imports: UrlImports,
+    url_operation: Mutex<Option<String>>,
 }
 
 static APP_STATE: OnceLock<Result<Arc<AppState>>> = OnceLock::new();
@@ -36,6 +39,71 @@ pub struct AppNative;
 
 #[module]
 impl AppNative {
+    /// 显式发现公开 GitHub 来源，保存引用、commit 与原生候选会话。
+    pub async fn discover_url_import(input: String) -> std::result::Result<JsonValue, JsError> {
+        let state = app_state().map_err(js_error)?;
+        let request = {
+            let _guard = import_available(&state.url_operation).map_err(js_error)?;
+            state.url_imports.begin()
+        };
+        run_json(move || {
+            state.url_imports.discover(
+                &state.repo,
+                &state.store,
+                &input,
+                &state.store.settings()?.proxy,
+                request,
+            )
+        })
+        .await
+    }
+
+    /// 清除 URL 会话并使尚未返回的发现结果失效。
+    pub async fn discard_url_import() -> std::result::Result<(), JsError> {
+        let state = app_state().map_err(js_error)?;
+        let request = {
+            let _guard = import_available(&state.url_operation).map_err(js_error)?;
+            state.url_imports.begin()
+        };
+        run_json(move || {
+            drop(request);
+            Ok(())
+        })
+        .await
+        .map(|_| ())
+    }
+
+    /// 返回 URL 会话中仍可重试的候选。
+    pub async fn url_import_snapshot() -> std::result::Result<JsonValue, JsError> {
+        run_json(|| Ok(app_state()?.url_imports.snapshot())).await
+    }
+
+    /// 提交只接收有效会话和候选 ID，来源与快照由后端保管。
+    pub fn import_url_candidates(
+        session_id: String,
+        ids: JsonValue,
+    ) -> std::result::Result<JsonValue, JsError> {
+        let state = app_state().map_err(js_error)?;
+        let mut guard = import_available(&state.url_operation).map_err(js_error)?;
+        let batch = state
+            .url_imports
+            .prepare(&session_id, &parse_id_list(ids).map_err(js_error)?)
+            .map_err(js_error)?;
+        let job_state = state.clone();
+        let id = operations()
+            .enqueue(OperationKind::ImportUrl, move |context| {
+                batch.run(
+                    &job_state.repo,
+                    &job_state.store,
+                    &job_state.store.settings()?.proxy,
+                    &context,
+                )
+            })
+            .map_err(js_error)?;
+        *guard = Some(id.clone());
+        to_json(id)
+    }
+
     /// 使用系统对话框追加本地导入来源，取消时保持原会话。
     pub async fn choose_local_import(kind: String) -> std::result::Result<JsonValue, JsError> {
         run_json(move || {
@@ -121,12 +189,15 @@ impl AppNative {
     pub async fn shutdown_local_import() -> std::result::Result<(), JsError> {
         blocking(|| {
             if let Some(Ok(state)) = APP_STATE.get() {
-                if let Ok(guard) = state.local_operation.lock()
-                    && let Some(id) = guard.as_ref()
-                {
-                    let _ = operations().cancel(id);
+                for operation in [&state.local_operation, &state.url_operation] {
+                    if let Ok(guard) = operation.lock()
+                        && let Some(id) = guard.as_ref()
+                    {
+                        let _ = operations().cancel(id);
+                    }
                 }
                 state.local_imports.discard();
+                state.url_imports.discard();
             }
         })
         .await
@@ -393,18 +464,21 @@ fn app_state() -> Result<Arc<AppState>> {
                 preview: preview::PreviewCache::new(),
                 local_imports: LocalImports::default(),
                 local_operation: Mutex::new(None),
+                url_imports: UrlImports::default(),
+                url_operation: Mutex::new(None),
             }))
         })
         .clone()
 }
 
 fn local_available(state: &AppState) -> Result<MutexGuard<'_, Option<String>>> {
-    let mut guard = state.local_operation.try_lock().map_err(|_| {
-        AppError::new(
-            crate::core::error::ErrorCode::Conflict,
-            "local import is busy",
-        )
-    })?;
+    import_available(&state.local_operation)
+}
+
+fn import_available(operation: &Mutex<Option<String>>) -> Result<MutexGuard<'_, Option<String>>> {
+    let mut guard = operation
+        .try_lock()
+        .map_err(|_| AppError::new(crate::core::error::ErrorCode::Conflict, "import is busy"))?;
     if guard
         .as_ref()
         .and_then(|id| operations().snapshot(id))
@@ -418,7 +492,7 @@ fn local_available(state: &AppState) -> Result<MutexGuard<'_, Option<String>>> {
     {
         return Err(AppError::new(
             crate::core::error::ErrorCode::Conflict,
-            "local import is busy",
+            "import is busy",
         ));
     }
     *guard = None;

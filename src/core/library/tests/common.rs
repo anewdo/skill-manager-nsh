@@ -26,7 +26,9 @@ pub(super) fn setup() -> (TempDir, CentralRepo, Arc<Store>) {
 }
 
 pub(super) fn source(repository: &str) -> SkillSource {
-    skills_sh::marketplace_source(repository, "skill").unwrap()
+    let mut source = skills_sh::marketplace_source(repository, "skill").unwrap();
+    source.subpath = Some("skill".to_string());
+    source
 }
 
 pub(super) fn write_skill(root: &Path, name: &str, content: &str) {

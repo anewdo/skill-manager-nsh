@@ -67,6 +67,21 @@ test("picks the grid columns from the window width", () => {
   expect(gridColumnsFor(1400)).toBe(4);
 });
 
+test("recognizes a marketplace entry after its real repository directory is resolved", () => {
+  const installed = skill("display-name", "github:owner/repo/skills/real-directory");
+  installed.source = {
+    source_type: "github",
+    source_key: "github:owner/repo/skills/real-directory",
+    repository: "owner/repo",
+    subpath: "skills/real-directory",
+    marketplace_skill_id: "market-name",
+  };
+  expect([...installedLineages([installed])].sort()).toEqual([
+    "github:owner/repo/market-name",
+    "github:owner/repo/skills/real-directory",
+  ]);
+});
+
 test("takes the owner from a GitHub source and none from a website source", () => {
   expect(githubOwner(entry("a"))).toBe("owner");
 

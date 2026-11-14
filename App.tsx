@@ -71,6 +71,7 @@ function App() {
   useAppScrollbars();
 
   const page = signal<PageId>("marketplace");
+  const libraryFocusId = signal<string | null>(null);
   const visited = signal<ReadonlySet<PageId>>(new Set<PageId>(["marketplace"]));
   const openPage = (next: PageId): void => {
     if (!visited().has(next)) {
@@ -108,10 +109,11 @@ function App() {
           )}
         </If>
         <PageSlot page="library" current={page()} visited={visited()}>
-          {() => <LibraryPage store={store} onOpenMarketplace={() => openPage("marketplace")} />}
+          {() => <LibraryPage store={store} onOpenMarketplace={() => openPage("marketplace")}
+            focusSkillId={libraryFocusId()} onFocusHandled={() => libraryFocusId.set(null)} />}
         </PageSlot>
         <PageSlot page="marketplace" current={page()} visited={visited()}>
-          {() => <MarketplacePage store={store} />}
+          {() => <MarketplacePage store={store} onOpenLibrary={(id) => { libraryFocusId.set(id); openPage("library"); }} />}
         </PageSlot>
         <PageSlot page="settings" current={page()} visited={visited()}>
           {() => <SettingsPage store={store} />}

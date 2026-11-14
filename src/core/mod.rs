@@ -15,6 +15,7 @@ pub mod settings;
 pub(crate) mod skill_path;
 pub mod sources;
 pub mod store;
+pub mod url_import;
 
 #[cfg(test)]
 mod test_support;

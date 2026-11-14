@@ -1,26 +1,20 @@
 use std::ffi::OsString;
-use std::io::Write;
 use std::path::Path;
-use std::process::Stdio;
-use std::thread;
 
-use super::process::{git_command, git_error, run_git, wait_git_child};
-use crate::core::central_repo::resolve_within;
+use super::process::{git_error, run_git, run_git_with_input};
 use crate::core::error::{AppError, ErrorCode, Result};
-use crate::core::http;
-use crate::core::metadata::{discover_single, parse_skill_md_content};
+use crate::core::metadata::{SkillMetadata, parse_skill_md_content};
 use crate::core::model::{ProxySettings, SkillSource};
 use crate::core::sources::common::{DownloadObserver, DownloadProgress, DownloadedSkill};
 
-const TEMP_DIR_PREFIX: &str = "skills-manager-nsh-github-";
 const MAX_SKILL_MD_BYTES: usize = 1024 * 1024;
 const MAX_CANDIDATES: usize = 256;
 
 #[derive(Clone)]
-struct SkillTreeEntry {
+pub(super) struct SkillTreeEntry {
     /// The repository-relative directory of a SKILL.md; empty for the repository root.
-    root: String,
-    oid: String,
+    pub(super) root: String,
+    oid: Option<String>,
 }
 
 pub fn download(
@@ -33,13 +27,50 @@ pub fn download(
         .url
         .as_deref()
         .ok_or_else(|| AppError::invalid_input("GitHub source URL is required"))?;
-    let subpath = source
-        .subpath
-        .as_deref()
-        .ok_or_else(|| AppError::invalid_input("GitHub source subpath is required"))?;
-    download_repository(url, subpath, proxy, staging_dir, observer)
+    let snapshot = super::snapshot::RepositorySnapshot::fetch(
+        staging_dir,
+        url,
+        source.git_ref.as_deref().unwrap_or("HEAD"),
+        proxy,
+        observer,
+    )?;
+    let root = match source.subpath.as_deref() {
+        Some(path) => path.to_string(),
+        None => resolve_skill_root(
+            &snapshot.checkout,
+            source
+                .marketplace_skill_id
+                .as_deref()
+                .ok_or_else(|| AppError::invalid_input("marketplace skill ID is required"))?,
+            proxy,
+            observer,
+        )?,
+    };
+    prepare_download(&snapshot, &root, staging_dir, proxy, observer)
 }
 
+fn prepare_download(
+    snapshot: &super::snapshot::RepositorySnapshot,
+    root: &str,
+    staging_dir: &Path,
+    proxy: &ProxySettings,
+    observer: &dyn DownloadObserver,
+) -> Result<DownloadedSkill> {
+    snapshot.materialize(&[root.to_string()], proxy, observer)?;
+    let target = snapshot.checkout.join(root);
+    let metadata = crate::core::metadata::parse_skill_md(&target)?;
+    let mut downloaded =
+        crate::core::local_import::staging::stage_skill(staging_dir, &target, &metadata, observer)?;
+    downloaded.revision = Some(snapshot.revision.clone());
+    downloaded.relative_root = if root.is_empty() {
+        ".".to_string()
+    } else {
+        root.to_string()
+    };
+    Ok(downloaded)
+}
+
+#[cfg(test)]
 fn download_repository(
     url: &str,
     subpath: &str,
@@ -47,127 +78,10 @@ fn download_repository(
     staging_dir: &Path,
     observer: &dyn DownloadObserver,
 ) -> Result<DownloadedSkill> {
-    http::custom_proxy_url(proxy)?;
-    let temp_dir = tempfile::Builder::new()
-        .prefix(TEMP_DIR_PREFIX)
-        .tempdir_in(staging_dir)?;
-    let checkout = temp_dir.path().join("checkout");
-
-    run_git(
-        [
-            OsString::from("clone"),
-            OsString::from("--depth"),
-            OsString::from("1"),
-            OsString::from("--filter=blob:none"),
-            OsString::from("--sparse"),
-            OsString::from("--no-checkout"),
-            OsString::from("--progress"),
-            OsString::from("--"),
-            OsString::from(url),
-            checkout.as_os_str().to_owned(),
-        ],
-        proxy,
-        true,
-        true,
-        observer,
-    )?;
-    observer.report(DownloadProgress {
-        current: 0,
-        total: None,
-        bytes: None,
-        bytes_total: None,
-        detail: Some("repository metadata".to_string()),
-    })?;
-
-    let skill_root = resolve_skill_root(&checkout, subpath, proxy, observer)?;
-    observer.report(DownloadProgress {
-        current: 0,
-        total: None,
-        bytes: None,
-        bytes_total: None,
-        detail: Some("selecting skill".to_string()),
-    })?;
-    if skill_root.is_empty() {
-        run_git(
-            [
-                OsString::from("-C"),
-                checkout.as_os_str().to_owned(),
-                OsString::from("sparse-checkout"),
-                OsString::from("disable"),
-            ],
-            proxy,
-            false,
-            false,
-            observer,
-        )?;
-    } else {
-        run_git(
-            [
-                OsString::from("-C"),
-                checkout.as_os_str().to_owned(),
-                OsString::from("sparse-checkout"),
-                OsString::from("set"),
-                OsString::from("--cone"),
-                OsString::from("--"),
-                OsString::from(&skill_root),
-            ],
-            proxy,
-            false,
-            false,
-            observer,
-        )?;
-    }
-    observer.report(DownloadProgress {
-        current: 0,
-        total: None,
-        bytes: None,
-        bytes_total: None,
-        detail: Some("preparing files".to_string()),
-    })?;
-    run_git(
-        [
-            OsString::from("-C"),
-            checkout.as_os_str().to_owned(),
-            OsString::from("checkout"),
-            OsString::from("--detach"),
-            OsString::from("--progress"),
-        ],
-        proxy,
-        false,
-        true,
-        observer,
-    )?;
-    let output = run_git(
-        [
-            OsString::from("-C"),
-            checkout.as_os_str().to_owned(),
-            OsString::from("rev-parse"),
-            OsString::from("HEAD"),
-        ],
-        proxy,
-        false,
-        false,
-        observer,
-    )?;
-    let revision = String::from_utf8(output.stdout)
-        .map_err(|_| git_error("git returned a non-UTF-8 revision", false))?
-        .trim()
-        .to_owned();
-    if !matches!(revision.len(), 40 | 64)
-        || !revision
-            .chars()
-            .all(|character| character.is_ascii_hexdigit())
-    {
-        return Err(git_error("git returned an invalid HEAD revision", false));
-    }
-
-    let target = if skill_root.is_empty() {
-        checkout.clone()
-    } else {
-        resolve_within(&checkout, &skill_root)?
-    };
-    let candidate = discover_single(&target)?;
-    DownloadedSkill::from_candidate(temp_dir, &checkout, candidate, Some(revision), None)
+    let snapshot =
+        super::snapshot::RepositorySnapshot::fetch(staging_dir, url, "HEAD", proxy, observer)?;
+    let root = resolve_skill_root(&snapshot.checkout, subpath, proxy, observer)?;
+    prepare_download(&snapshot, &root, staging_dir, proxy, observer)
 }
 
 /// Finds the skill a marketplace entry names: skills.sh identifies a GitHub skill
@@ -178,7 +92,7 @@ fn resolve_skill_root(
     proxy: &ProxySettings,
     observer: &dyn DownloadObserver,
 ) -> Result<String> {
-    let entries = list_skill_candidates(checkout, proxy, observer)?;
+    let entries = list_skill_candidates(checkout, None, proxy, observer)?;
     if entries.is_empty() {
         return Err(AppError::new(
             ErrorCode::InvalidSkill,
@@ -264,25 +178,25 @@ fn ambiguous_skill(subpath: &str, roots: &[String]) -> AppError {
 }
 
 /// Lists every SKILL.md in the checked out revision without fetching file contents.
-fn list_skill_candidates(
+pub(super) fn list_skill_candidates(
     checkout: &Path,
+    scope: Option<&str>,
     proxy: &ProxySettings,
     observer: &dyn DownloadObserver,
 ) -> Result<Vec<SkillTreeEntry>> {
-    let output = run_git(
-        [
-            OsString::from("-C"),
-            checkout.as_os_str().to_owned(),
-            OsString::from("ls-tree"),
-            OsString::from("-r"),
-            OsString::from("-z"),
-            OsString::from("HEAD"),
-        ],
-        proxy,
-        false,
-        false,
-        observer,
-    )?;
+    let mut args = vec![
+        OsString::from("-C"),
+        checkout.as_os_str().to_owned(),
+        OsString::from("--literal-pathspecs"),
+        OsString::from("ls-tree"),
+        OsString::from("-r"),
+        OsString::from("-z"),
+        OsString::from("HEAD"),
+    ];
+    if let Some(scope) = scope {
+        args.extend([OsString::from("--"), OsString::from(scope)]);
+    }
+    let output = run_git(args, proxy, false, false, observer)?;
 
     let mut entries = Vec::new();
     for record in output.stdout.split(|byte| *byte == 0) {
@@ -305,7 +219,7 @@ fn list_skill_candidates(
             continue;
         };
         let mut fields = header.split(' ');
-        let _mode = fields.next();
+        let regular = matches!(fields.next(), Some("100644" | "100755"));
         if fields.next() != Some("blob") {
             continue;
         }
@@ -317,8 +231,14 @@ fn list_skill_candidates(
         }
         entries.push(SkillTreeEntry {
             root: root.strip_suffix('/').unwrap_or("").to_string(),
-            oid: oid.to_string(),
+            oid: regular.then(|| oid.to_string()),
         });
+        if entries.len() > MAX_CANDIDATES {
+            return Err(AppError::new(
+                ErrorCode::AmbiguousSkill,
+                "repository exceeds the 256 candidate limit",
+            ));
+        }
     }
     Ok(entries)
 }
@@ -330,48 +250,90 @@ fn read_candidate_names(
     proxy: &ProxySettings,
     observer: &dyn DownloadObserver,
 ) -> Result<Vec<Option<String>>> {
-    observer.check_cancelled()?;
-    let mut command = git_command(proxy)?;
-    command
-        .arg("-C")
-        .arg(checkout)
-        .args(["cat-file", "--batch"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = command
-        .spawn()
-        .map_err(|error| git_error(format!("failed to run git: {error}"), false))?;
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| git_error("git did not provide stdin", false))?;
-    let oids: Vec<String> = entries.iter().map(|entry| entry.oid.clone()).collect();
-    // A blob-filtered clone fetches the blobs this asks for over the network,
-    // and stdout must keep draining while that happens.
-    let writer = thread::spawn(move || {
-        for oid in oids {
-            if writeln!(stdin, "{oid}").is_err() {
-                break;
-            }
-        }
-    });
-    let output = wait_git_child(&mut child, false, observer);
-    let _ = writer.join();
-    let output = output?;
-    if !output.status.success() {
-        return Err(git_error(
-            format!(
-                "git failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ),
-            false,
-        ));
-    }
-    Ok(parse_candidate_names(&output.stdout, entries.len()))
+    Ok(read_candidate_metadata(checkout, entries, proxy, observer)?
+        .into_iter()
+        .map(|metadata| metadata.map(|metadata| metadata.name))
+        .collect())
 }
 
-fn parse_candidate_names(output: &[u8], count: usize) -> Vec<Option<String>> {
+pub(super) fn read_candidate_metadata(
+    checkout: &Path,
+    entries: &[SkillTreeEntry],
+    proxy: &ProxySettings,
+    observer: &dyn DownloadObserver,
+) -> Result<Vec<Option<SkillMetadata>>> {
+    let oids: Vec<_> = entries
+        .iter()
+        .filter_map(|entry| entry.oid.clone())
+        .collect();
+    let sizes = read_objects(checkout, &oids, "--batch-check", proxy, observer)?;
+    let sizes =
+        String::from_utf8(sizes).map_err(|_| git_error("invalid Git object sizes", false))?;
+    let eligible: Vec<_> = sizes
+        .lines()
+        .map(|line| {
+            line.split_whitespace()
+                .nth(2)
+                .and_then(|size| size.parse::<usize>().ok())
+                .is_some_and(|size| size <= MAX_SKILL_MD_BYTES)
+        })
+        .collect();
+    if eligible.len() != oids.len() {
+        return Err(git_error(
+            "Git returned incomplete candidate metadata",
+            true,
+        ));
+    }
+    let selected: Vec<_> = oids
+        .into_iter()
+        .zip(&eligible)
+        .filter_map(|(oid, eligible)| eligible.then_some(oid))
+        .collect();
+    let output = read_objects(checkout, &selected, "--batch", proxy, observer)?;
+    let mut metadata = parse_candidate_metadata(&output, selected.len()).into_iter();
+    let mut eligible = eligible.into_iter();
+    Ok(entries
+        .iter()
+        .map(|entry| {
+            entry.oid.as_ref()?;
+            let eligible = eligible.next().unwrap();
+            if eligible {
+                metadata.next().flatten()
+            } else {
+                None
+            }
+        })
+        .collect())
+}
+
+fn read_objects(
+    checkout: &Path,
+    oids: &[String],
+    mode: &str,
+    proxy: &ProxySettings,
+    observer: &dyn DownloadObserver,
+) -> Result<Vec<u8>> {
+    if oids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let input = format!("{}\n", oids.join("\n")).into_bytes();
+    let output = run_git_with_input(
+        [
+            OsString::from("-C"),
+            checkout.as_os_str().to_owned(),
+            OsString::from("cat-file"),
+            OsString::from(mode),
+        ],
+        proxy,
+        true,
+        false,
+        Some(input),
+        observer,
+    )?;
+    Ok(output.stdout)
+}
+
+fn parse_candidate_metadata(output: &[u8], count: usize) -> Vec<Option<SkillMetadata>> {
     let mut names = Vec::with_capacity(count);
     let mut cursor = 0;
     while names.len() < count && cursor < output.len() {
@@ -400,7 +362,6 @@ fn parse_candidate_names(output: &[u8], count: usize) -> Vec<Option<String>> {
             std::str::from_utf8(content)
                 .ok()
                 .and_then(|content| parse_skill_md_content(content, "SKILL.md").ok())
-                .map(|metadata| metadata.name)
         } else {
             None
         };

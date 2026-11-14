@@ -45,6 +45,9 @@ export function installedLineages(skills: readonly InstalledSkill[]): Set<string
   for (const skill of skills) {
     if (skill.source && skill.local_state !== "missing") {
       keys.add(skill.source.source_key);
+      if (skill.source.marketplace_skill_id !== undefined) {
+        keys.add(`github:${skill.source.repository}/${skill.source.marketplace_skill_id}`);
+      }
     }
   }
   return keys;

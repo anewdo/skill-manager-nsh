@@ -36,7 +36,7 @@ test("switches the download page between its three tabs", async () => {
   expect(app.shows("id:import-local-folder")).toBe(true);
 
   await app.press("id:marketplace-tab-url");
-  await app.waitFor("id:import-url-unavailable");
+  await app.waitFor("id:import-url-input");
   expect(app.shows("id:import-local-drop")).toBe(false);
 });
 

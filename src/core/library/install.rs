@@ -64,9 +64,29 @@ pub(super) fn install_with_download(
     download: impl FnOnce() -> Result<DownloadedSkill>,
     context: &OperationContext,
 ) -> Result<(InstalledSkill, Option<String>)> {
-    clear_missing_lineage(repo, store, &source, context)?;
+    if source.subpath.is_some() {
+        clear_missing_lineage(repo, store, &source, context)?;
+    }
     context.progress(progress("downloading", true))?;
     let downloaded = download()?;
+    let source = if source.source_type == crate::core::model::SourceType::GitHub
+        && source.git_ref.is_none()
+    {
+        let mut resolved = crate::core::sources::github::input::source(
+            source.repository.as_deref().unwrap(),
+            None,
+            if downloaded.relative_root == "." {
+                ""
+            } else {
+                &downloaded.relative_root
+            },
+        )?;
+        resolved.marketplace_skill_id = source.marketplace_skill_id;
+        resolved
+    } else {
+        source
+    };
+    clear_missing_lineage(repo, store, &source, context)?;
     context.progress(progress("validating", true))?;
     let outcome = commit_prepared(
         repo,

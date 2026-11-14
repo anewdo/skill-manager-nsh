@@ -36,6 +36,11 @@ struct DiscoveryIndex {
 }
 
 pub(super) fn canonical_source(source: &SkillSource) -> Result<SkillSource> {
+    if source.git_ref.is_some() {
+        return Err(AppError::invalid_input(
+            "well-known sources do not support Git references",
+        ));
+    }
     let url = source
         .url
         .as_deref()

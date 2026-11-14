@@ -1,4 +1,4 @@
-import { List, View, windowSize } from "nsh";
+import { effect, List, View, windowSize } from "nsh";
 import {
   Banner,
   Button,
@@ -25,11 +25,22 @@ import { cardColumnsFor, statusFilters, viewModes } from "./model";
 export interface LibraryPageProps {
   store: AppStore;
   onOpenMarketplace: () => void;
+  focusSkillId?: string | null;
+  onFocusHandled?: () => void;
 }
 
 export function LibraryPage(props: LibraryPageProps) {
   const text = props.store.text;
   const c = createLibraryController(props.store);
+  effect(() => {
+    const id = props.focusSkillId;
+    if (!id) return;
+    const skill = props.store.skills().find((skill) => skill.id === id);
+    if (skill !== undefined) {
+      c.openDetail(skill);
+      props.onFocusHandled?.();
+    }
+  });
 
   /** What every item gets besides its skill and whether it is selected. */
   const itemProps: Omit<SkillItemProps, "skill" | "selected" | "busy"> = {

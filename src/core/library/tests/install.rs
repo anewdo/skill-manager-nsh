@@ -56,6 +56,27 @@ fn fresh_install_commits_files_lineage_and_content_identity() {
 }
 
 #[test]
+fn marketplace_install_persists_the_resolved_directory_and_original_entry_id() {
+    let (_temp, repo, store) = setup();
+    let source =
+        crate::core::sources::skills_sh::marketplace_source("owner/repo", "market-name").unwrap();
+    let mut content = downloaded(&repo, "display-name", "fresh");
+    content.relative_root = "skills/real-directory".to_string();
+    let snapshot = run_install(&repo, &store, source, content);
+    assert_eq!(snapshot.state, OperationState::Succeeded);
+    let skill: InstalledSkill = serde_json::from_value(snapshot.result.unwrap()).unwrap();
+    let source = skill.source.as_ref().unwrap();
+    assert_eq!(source.source_key, "github:owner/repo/skills/real-directory");
+    assert_eq!(source.subpath.as_deref(), Some("skills/real-directory"));
+    assert_eq!(source.marketplace_skill_id.as_deref(), Some("market-name"));
+    assert!(source.git_ref.is_none());
+    assert_eq!(
+        Store::open(&repo).unwrap().skill(&skill.id).unwrap(),
+        Some(skill)
+    );
+}
+
+#[test]
 fn same_lineage_conflicts_before_download_without_overwriting_files() {
     let (_temp, repo, store) = setup();
     let existing = add_existing(

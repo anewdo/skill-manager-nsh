@@ -37,6 +37,8 @@ function matchesQuery(skill: InstalledSkill, term: string): boolean {
     skill.root_relpath,
     skill.source?.source_key,
     skill.source?.repository,
+    skill.source?.git_ref,
+    skill.source?.subpath,
   ];
   return values.some((value) => value !== undefined && value.toLowerCase().includes(term));
 }

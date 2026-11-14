@@ -14,11 +14,16 @@ import type {
   SkillPreview,
   SkillSource,
   UpdateConflictPolicy,
+  UrlDiscovery,
 } from "./types";
 
 interface NativeModules {
   AppNative: {
     schemaVersion(): number;
+    discoverUrlImport(input: string): Promise<unknown>;
+    discardUrlImport(): Promise<void>;
+    urlImportSnapshot(): Promise<unknown>;
+    importUrlCandidates(sessionId: string, ids: unknown): unknown;
     chooseLocalImport(kind: string): Promise<unknown>;
     discoverLocalImport(paths: unknown): Promise<unknown>;
     rescanLocalImport(): Promise<unknown>;
@@ -49,6 +54,22 @@ interface NativeModules {
 }
 
 const { AppNative } = nativeModule<NativeModules>("skills-manager-nsh/native");
+
+export async function discoverUrlImport(input: string): Promise<UrlDiscovery> {
+  return await AppNative.discoverUrlImport(input) as UrlDiscovery;
+}
+
+export async function discardUrlImport(): Promise<void> {
+  await AppNative.discardUrlImport();
+}
+
+export async function urlImportSnapshot(): Promise<UrlDiscovery | null> {
+  return await AppNative.urlImportSnapshot() as UrlDiscovery | null;
+}
+
+export function importUrlCandidates(sessionId: string, ids: string[]): string {
+  return AppNative.importUrlCandidates(sessionId, ids) as string;
+}
 
 export async function chooseLocalImport(kind: "folder" | "zip"): Promise<LocalDiscovery | null> {
   return await AppNative.chooseLocalImport(kind) as LocalDiscovery | null;

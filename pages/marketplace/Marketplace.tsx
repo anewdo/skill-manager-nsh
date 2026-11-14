@@ -61,7 +61,7 @@ const subtitleKeys: Record<MarketplaceTab, MessageKey> = {
   url: "marketplace.subtitle.url",
 };
 
-export function MarketplacePage(props: { store: AppStore }) {
+export function MarketplacePage(props: { store: AppStore; onOpenLibrary: (id: string) => void }) {
   const text = props.store.text;
   const c = createMarketplaceController(props.store);
   const imp = createImportController(props.store);
@@ -241,7 +241,7 @@ export function MarketplacePage(props: { store: AppStore }) {
       </If>
 
       <If when={imp.tab() === "url"}>
-        {() => <UrlImportPanel store={props.store} />}
+        {() => <UrlImportPanel store={props.store} controller={imp.url} onOpenLibrary={props.onOpenLibrary} />}
       </If>
 
       <PreviewModal store={props.store} controller={c} />
