@@ -1,4 +1,5 @@
-use super::*;
+use super::common::*;
+use crate::core::library::inspect::{MAX_LOCAL_SKILL_MD_BYTES, skill_detail};
 
 #[test]
 fn detail_reports_clean_modified_and_missing_local_state() {

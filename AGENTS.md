@@ -26,9 +26,9 @@ pages/<page>/              # 技能库、市场、设置：<Page>.tsx（视图�
 nsh.json                   # mixed 工程配置，rust = "."
 Cargo.toml                 # Rust crate 配置
 src/lib.rs                 # native_module 注册；无 src/main.rs
-src/api/mod.rs             # AppNative、JsError、blocking、Callback
-src/core/                  # 模型、Store、路径、队列、技能库（library.rs）等核心逻辑
-src/core/sources/          # skills.sh、GitHub、well-known、预览与下载
+src/api/                   # native.rs：AppNative、JsError、blocking、Callback
+src/core/                  # 模型、Store、路径、队列；library/、local_import/ 按职责拆分
+src/core/sources/          # common.rs：来源共用类型与下载入口；GitHub、well-known、skills.sh、预览
 .nsh/types/                # nsh 自动生成的声明
 docs/plans/                # 已确认的产品与实施计划；当前路线图为 2026-11-11-roadmap.md
 docs/progress/             # 分模块实现状态与验证记录
@@ -37,6 +37,7 @@ docs/todo/                 # 后续工作安排
 
 ## nsh 开发注意事项
 
+- Rust 的 `mod.rs` 只声明模块；共享类型、常量和函数放在 `common.rs` 或 `shared.rs`，调用方直接引用具体职责模块。
 - 以本机安装的 nsh 版本为准（当前 `0.5.0`）
 - 桌面窗口使用 `0.5.0` 的 `WindowRef` 模型：`Window.get("main")` / `currentWindow()` 取窗口，再用 `setBounds` 调整位置与尺寸；
 - 查询 nsh API 或行为时，先读 `docs/NSH-DOCS-LOOKUP.md`；优先 Context7 `/longbridge/nsh`，每项最多 4 次查询，不臆造 API 或文档地址

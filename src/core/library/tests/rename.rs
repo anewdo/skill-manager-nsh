@@ -1,5 +1,28 @@
-use super::*;
-use crate::core::model::OperationState;
+use super::common::*;
+use crate::core::library::manage::rename_skill;
+use crate::core::model::{OperationKind, OperationSnapshot, OperationState};
+use crate::core::naming::root_key;
+use crate::core::operations::OperationQueue;
+use crate::core::test_support::wait_terminal;
+
+fn run_rename(
+    repo: &CentralRepo,
+    store: &Arc<Store>,
+    id: &str,
+    new_name: &str,
+) -> OperationSnapshot {
+    let queue = OperationQueue::new();
+    let job_repo = repo.clone();
+    let job_store = store.clone();
+    let job_id = id.to_string();
+    let job_name = new_name.to_string();
+    let operation = queue
+        .enqueue(OperationKind::Rename, move |context| {
+            rename_skill(&job_repo, &job_store, &job_id, &job_name, &context)
+        })
+        .unwrap();
+    wait_terminal(&queue, &operation)
+}
 
 #[test]
 fn rename_moves_the_directory_and_updates_identity_fields() {

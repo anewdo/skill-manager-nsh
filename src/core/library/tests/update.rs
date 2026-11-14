@@ -1,4 +1,8 @@
-use super::*;
+use super::common::*;
+use crate::core::library::update::{
+    apply_update_with_download, check_update_with_download, check_updates,
+    check_updates_with_download,
+};
 
 fn read_skill_md(repo: &CentralRepo, relative: &str) -> String {
     fs::read_to_string(skill_path(repo, relative).join("SKILL.md")).unwrap()

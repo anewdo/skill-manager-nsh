@@ -1,7 +1,33 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use super::*;
-use crate::core::model::OperationState;
+use super::common::*;
+use crate::core::library::inspect::list_skills;
+use crate::core::library::install::{InstallOutcome, install_with_download};
+use crate::core::model::{OperationKind, OperationSnapshot, OperationState};
+use crate::core::operations::OperationQueue;
+use crate::core::test_support::wait_terminal;
+
+fn run_install(
+    repo: &CentralRepo,
+    store: &Arc<Store>,
+    source: SkillSource,
+    downloaded: DownloadedSkill,
+) -> OperationSnapshot {
+    let queue = OperationQueue::new();
+    let job_repo = repo.clone();
+    let job_store = store.clone();
+    let id = queue
+        .enqueue(OperationKind::Install, move |context| {
+            let (skill, unmanaged_copy) =
+                install_with_download(&job_repo, &job_store, source, || Ok(downloaded), &context)?;
+            Ok(InstallOutcome {
+                skill,
+                unmanaged_copy,
+            })
+        })
+        .unwrap();
+    wait_terminal(&queue, &id)
+}
 
 #[test]
 fn fresh_install_commits_files_lineage_and_content_identity() {

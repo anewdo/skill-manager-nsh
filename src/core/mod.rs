@@ -1,3 +1,4 @@
+pub(crate) mod archive;
 pub mod central_repo;
 pub mod content_identity;
 pub mod error;
@@ -11,6 +12,7 @@ pub mod model;
 pub mod naming;
 pub mod operations;
 pub mod settings;
+pub(crate) mod skill_path;
 pub mod sources;
 pub mod store;
 

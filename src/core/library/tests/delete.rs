@@ -1,5 +1,26 @@
-use super::*;
-use crate::core::model::OperationState;
+use super::common::*;
+use crate::core::library::manage::delete_skills;
+use crate::core::model::{OperationKind, OperationSnapshot, OperationState};
+use crate::core::operations::OperationQueue;
+use crate::core::test_support::wait_terminal;
+
+fn run_delete(
+    repo: &CentralRepo,
+    store: &Arc<Store>,
+    ids: &[&str],
+    confirm_modified: bool,
+) -> OperationSnapshot {
+    let queue = OperationQueue::new();
+    let job_repo = repo.clone();
+    let job_store = store.clone();
+    let job_ids = ids.iter().map(|id| (*id).to_string()).collect::<Vec<_>>();
+    let operation = queue
+        .enqueue(OperationKind::Delete, move |context| {
+            delete_skills(&job_repo, &job_store, &job_ids, confirm_modified, &context)
+        })
+        .unwrap();
+    wait_terminal(&queue, &operation)
+}
 
 #[test]
 fn delete_removes_the_local_copy_and_the_record_immediately() {
